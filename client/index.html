@@ -24,17 +24,17 @@
         </div>
 
         <div class="chat-section" id="chat-section" style="display: none;">
-            <div class="messages-container" id="messages" 
-                 hx-ext="ws" 
-                 ws-connect="">
-                <!-- Messages will appear here -->
+            <div id="chat-container" hx-ext="ws">
+                <div class="messages-container" id="messages">
+                    <!-- Messages will appear here -->
+                </div>
+                <form class="input-section" id="message-form" ws-send>
+                    <input type="hidden" name="username" id="hidden-username">
+                    <input type="hidden" name="type" value="chat">
+                    <input type="text" name="content" id="message-input" placeholder="Type your message..." maxlength="500" autocomplete="off">
+                    <button type="submit" id="send-btn">Send</button>
+                </form>
             </div>
-            <form class="input-section" id="message-form">
-                <input type="hidden" name="username" id="hidden-username">
-                <input type="hidden" name="type" value="chat">
-                <input type="text" name="content" id="message-input" placeholder="Type your message..." maxlength="500">
-                <button type="submit" id="send-btn">Send</button>
-            </form>
         </div>
     </div>
 
