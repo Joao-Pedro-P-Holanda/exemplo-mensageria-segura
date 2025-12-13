@@ -33,7 +33,7 @@ exemplo-mensageria-segura/
 
 - Docker
 - Docker Compose
-- Go 1.21 or later (for building the server binary)
+- Go 1.23 or later (for building the server binary)
 - Make (optional, for easier build process)
 
 ### Running the Application

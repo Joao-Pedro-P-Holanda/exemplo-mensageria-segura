@@ -12,7 +12,9 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for this example
+		// WARNING: This allows all origins for development/testing purposes.
+		// In production, restrict this to specific allowed origins for security.
+		return true
 	},
 }
 
@@ -64,7 +66,7 @@ func (h *Hub) run() {
 			log.Printf("Client disconnected. Total clients: %d", len(h.clients))
 
 		case message := <-h.broadcast:
-			h.mutex.RLock()
+			h.mutex.Lock()
 			for client := range h.clients {
 				select {
 				case client.send <- message:
@@ -73,7 +75,7 @@ func (h *Hub) run() {
 					delete(h.clients, client)
 				}
 			}
-			h.mutex.RUnlock()
+			h.mutex.Unlock()
 		}
 	}
 }
