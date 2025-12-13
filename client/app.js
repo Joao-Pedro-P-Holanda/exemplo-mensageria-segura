@@ -96,24 +96,29 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     // Listen for htmx WebSocket events
+    let wsSocket = null;
     document.body.addEventListener('htmx:wsOpen', (event) => {
         console.log('WebSocket connected via htmx');
         updateStatus(true);
         
-        // Send join message using htmx's WebSocket send
-        const chatContainer = document.getElementById('chat-container');
+        // Store reference to the WebSocket for programmatic sends
+        wsSocket = event.detail.socketWrapper;
+        
+        // Send join message directly via WebSocket
         const joinMsg = JSON.stringify({
             username: username,
             content: `${username} joined the chat`,
             type: 'join'
         });
         
-        // Use htmx's WebSocket send mechanism
-        htmx.trigger(chatContainer, 'htmx:wsConfigSend', {detail: {message: joinMsg}});
+        if (wsSocket && wsSocket.send) {
+            wsSocket.send(joinMsg);
+        }
     });
     
     document.body.addEventListener('htmx:wsClose', () => {
         console.log('WebSocket disconnected via htmx');
+        wsSocket = null;
         updateStatus(false);
     });
     
@@ -126,7 +131,15 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('htmx:wsBeforeMessage', (event) => {
         try {
             const message = JSON.parse(event.detail.message);
-            displayMessage(message);
+            
+            // Validate message structure
+            if (message && typeof message === 'object' && 
+                message.username && message.content && message.type) {
+                displayMessage(message);
+            } else {
+                console.warn('Invalid message format:', message);
+            }
+            
             // Prevent htmx from processing the message as HTML
             event.preventDefault();
         } catch (e) {
@@ -134,15 +147,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Intercept form submission to handle with htmx WebSocket
+    // Handle form submission to clear input after send
     const messageForm = document.getElementById('message-form');
-    messageForm.addEventListener('htmx:wsBeforeSend', (event) => {
+    messageForm.addEventListener('htmx:wsAfterSend', (event) => {
         // Clear the input after htmx sends the message
         const messageInput = document.getElementById('message-input');
-        setTimeout(() => {
-            messageInput.value = '';
-            messageInput.focus();
-        }, 0);
+        messageInput.value = '';
+        messageInput.focus();
     });
     
     // Handle Enter key in message input to submit form
@@ -156,17 +167,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Handle page unload - send leave message
 window.addEventListener('beforeunload', () => {
-    if (username) {
-        const chatContainer = document.getElementById('chat-container');
+    if (username && wsSocket && wsSocket.send) {
         const leaveMsg = JSON.stringify({
             username: username,
             content: `${username} left the chat`,
             type: 'leave'
         });
         
-        // Try to send leave message
+        // Send leave message via WebSocket
         try {
-            htmx.trigger(chatContainer, 'htmx:wsConfigSend', {detail: {message: leaveMsg}});
+            wsSocket.send(leaveMsg);
         } catch (e) {
             console.log('Could not send leave message');
         }
