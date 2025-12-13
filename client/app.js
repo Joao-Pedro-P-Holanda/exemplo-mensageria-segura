@@ -1,14 +1,7 @@
-let ws = null;
 let username = '';
-let isConnected = false;
-
-// Get WebSocket URL from environment or use default
-const WS_URL = window.location.hostname === 'localhost' 
-    ? 'ws://localhost:8080/ws'
-    : `ws://${window.location.hostname}:8080/ws`;
+let ws = null;
 
 function updateStatus(connected) {
-    isConnected = connected;
     const statusDot = document.querySelector('.status-dot');
     const statusText = document.getElementById('status-text');
     
@@ -23,53 +16,11 @@ function updateStatus(connected) {
     }
 }
 
-function connectWebSocket() {
-    try {
-        ws = new WebSocket(WS_URL);
-        
-        ws.onopen = () => {
-            console.log('Connected to WebSocket server');
-            updateStatus(true);
-            
-            // Send join message
-            const joinMsg = {
-                username: username,
-                content: `${username} joined the chat`,
-                type: 'join'
-            };
-            ws.send(JSON.stringify(joinMsg));
-        };
-        
-        ws.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data);
-                displayMessage(message);
-            } catch (e) {
-                console.error('Error parsing message:', e);
-            }
-        };
-        
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            updateStatus(false);
-        };
-        
-        ws.onclose = () => {
-            console.log('Disconnected from WebSocket server');
-            updateStatus(false);
-            
-            // Attempt to reconnect after 3 seconds
-            setTimeout(() => {
-                if (username) {
-                    console.log('Attempting to reconnect...');
-                    connectWebSocket();
-                }
-            }, 3000);
-        };
-    } catch (error) {
-        console.error('Error connecting to WebSocket:', error);
-        updateStatus(false);
-    }
+function getWebSocketUrl() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname;
+    const port = window.location.hostname === 'localhost' ? '8080' : '8080';
+    return `${protocol}//${host}:${port}/ws`;
 }
 
 function joinChat() {
@@ -81,34 +32,29 @@ function joinChat() {
         return;
     }
     
+    // Set hidden username field for form submissions
+    document.getElementById('hidden-username').value = username;
+    
     // Hide login section and show chat section
     document.getElementById('login-section').style.display = 'none';
     document.getElementById('chat-section').style.display = 'flex';
     
-    // Connect to WebSocket
-    connectWebSocket();
+    // Set WebSocket URL and connect using htmx
+    const messagesContainer = document.getElementById('messages');
+    const wsUrl = getWebSocketUrl();
+    messagesContainer.setAttribute('ws-connect', wsUrl);
+    
+    // Trigger htmx to process the WebSocket connection
+    htmx.process(messagesContainer);
     
     // Focus on message input
     document.getElementById('message-input').focus();
 }
 
-function sendMessage() {
-    const messageInput = document.getElementById('message-input');
-    const content = messageInput.value.trim();
-    
-    if (!content || !isConnected) {
-        return;
+function sendWebSocketMessage(message) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(message));
     }
-    
-    const message = {
-        username: username,
-        content: content,
-        type: 'chat'
-    };
-    
-    ws.send(JSON.stringify(message));
-    messageInput.value = '';
-    messageInput.focus();
 }
 
 function displayMessage(message) {
@@ -146,27 +92,95 @@ function escapeHtml(text) {
 }
 
 // Event listeners
-document.getElementById('username-input').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        joinChat();
-    }
-});
-
-document.getElementById('message-input').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        sendMessage();
-    }
+document.addEventListener('DOMContentLoaded', () => {
+    const joinBtn = document.getElementById('join-btn');
+    joinBtn.addEventListener('click', joinChat);
+    
+    document.getElementById('username-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            joinChat();
+        }
+    });
+    
+    // Listen for htmx WebSocket events
+    document.body.addEventListener('htmx:wsOpen', (event) => {
+        console.log('WebSocket connected via htmx');
+        ws = event.detail.socketWrapper;
+        updateStatus(true);
+        
+        // Send join message
+        const joinMsg = {
+            username: username,
+            content: `${username} joined the chat`,
+            type: 'join'
+        };
+        sendWebSocketMessage(joinMsg);
+    });
+    
+    document.body.addEventListener('htmx:wsClose', () => {
+        console.log('WebSocket disconnected via htmx');
+        ws = null;
+        updateStatus(false);
+    });
+    
+    document.body.addEventListener('htmx:wsError', (event) => {
+        console.error('WebSocket error via htmx:', event);
+        updateStatus(false);
+    });
+    
+    // Listen for incoming WebSocket messages
+    document.body.addEventListener('htmx:wsBeforeMessage', (event) => {
+        try {
+            const message = JSON.parse(event.detail.message);
+            displayMessage(message);
+            // Prevent htmx from processing the message as HTML
+            event.preventDefault();
+        } catch (e) {
+            console.error('Error parsing message:', e);
+        }
+    });
+    
+    // Handle form submission
+    const messageForm = document.getElementById('message-form');
+    messageForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        
+        const messageInput = document.getElementById('message-input');
+        const content = messageInput.value.trim();
+        
+        if (!content) {
+            return;
+        }
+        
+        const message = {
+            username: username,
+            content: content,
+            type: 'chat'
+        };
+        
+        sendWebSocketMessage(message);
+        
+        messageInput.value = '';
+        messageInput.focus();
+    });
+    
+    // Handle Enter key in message input
+    document.getElementById('message-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            messageForm.dispatchEvent(new Event('submit'));
+        }
+    });
 });
 
 // Handle page unload
 window.addEventListener('beforeunload', () => {
-    if (ws && isConnected) {
+    if (username && ws) {
         const leaveMsg = {
             username: username,
             content: `${username} left the chat`,
             type: 'leave'
         };
-        ws.send(JSON.stringify(leaveMsg));
-        ws.close();
+        sendWebSocketMessage(leaveMsg);
     }
 });

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Secure Chat</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="htmx.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -19,17 +20,21 @@
         <div class="login-section" id="login-section">
             <h2>Join Chat</h2>
             <input type="text" id="username-input" placeholder="Enter your username" maxlength="20">
-            <button id="join-btn" onclick="joinChat()">Join Chat</button>
+            <button id="join-btn">Join Chat</button>
         </div>
 
         <div class="chat-section" id="chat-section" style="display: none;">
-            <div class="messages-container" id="messages">
+            <div class="messages-container" id="messages" 
+                 hx-ext="ws" 
+                 ws-connect="">
                 <!-- Messages will appear here -->
             </div>
-            <div class="input-section">
-                <input type="text" id="message-input" placeholder="Type your message..." maxlength="500">
-                <button id="send-btn" onclick="sendMessage()">Send</button>
-            </div>
+            <form class="input-section" id="message-form">
+                <input type="hidden" name="username" id="hidden-username">
+                <input type="hidden" name="type" value="chat">
+                <input type="text" name="content" id="message-input" placeholder="Type your message..." maxlength="500">
+                <button type="submit" id="send-btn">Send</button>
+            </form>
         </div>
     </div>
 
