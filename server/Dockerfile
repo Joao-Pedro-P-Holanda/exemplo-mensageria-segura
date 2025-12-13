@@ -1,28 +1,8 @@
-# Build stage
-FROM golang:1.21-alpine AS builder
+FROM busybox:latest
 
-WORKDIR /app
-
-# Copy go mod files
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copy source code
-COPY *.go ./
-
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o /server
-
-# Runtime stage
-FROM alpine:latest
-
-RUN apk --no-cache add ca-certificates
-
-WORKDIR /root/
-
-# Copy the binary from builder
-COPY --from=builder /server .
+# Copy the pre-built binary
+COPY server-linux /server
 
 EXPOSE 8080
 
-CMD ["./server"]
+CMD ["/server"]

@@ -42,9 +42,20 @@ git clone https://github.com/Joao-Pedro-P-Holanda/exemplo-mensageria-segura.git
 cd exemplo-mensageria-segura
 ```
 
-2. Start all services using Docker Compose:
+2. Build and start all services:
+
+**Using Make (recommended):**
 ```bash
-docker-compose up --build
+make run
+```
+
+**Or manually:**
+```bash
+# Build the server binary
+cd server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server-linux main.go && cd ..
+
+# Start all services
+docker compose up --build -d
 ```
 
 This will start:
@@ -53,6 +64,20 @@ This will start:
   - Client 1: http://localhost:3001
   - Client 2: http://localhost:3002
   - Client 3: http://localhost:3003
+
+3. View logs:
+```bash
+make logs
+# or
+docker compose logs -f
+```
+
+4. Stop all services:
+```bash
+make stop
+# or
+docker compose down
+```
 
 ### Testing Chat Privacy
 
