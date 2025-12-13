@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Chat</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="chat-header">
+            <h1>🔒 Secure Chat</h1>
+            <div class="connection-status" id="status">
+                <span class="status-dot disconnected"></span>
+                <span id="status-text">Disconnected</span>
+            </div>
+        </div>
+
+        <div class="login-section" id="login-section">
+            <h2>Join Chat</h2>
+            <input type="text" id="username-input" placeholder="Enter your username" maxlength="20">
+            <button id="join-btn" onclick="joinChat()">Join Chat</button>
+        </div>
+
+        <div class="chat-section" id="chat-section" style="display: none;">
+            <div class="messages-container" id="messages">
+                <!-- Messages will appear here -->
+            </div>
+            <div class="input-section">
+                <input type="text" id="message-input" placeholder="Type your message..." maxlength="500">
+                <button id="send-btn" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
