@@ -36,6 +36,13 @@ exemplo-mensageria-segura/
 - Go 1.23 or later (for building the server binary)
 - Make (optional, for easier build process)
 
+#### Gerando certificado autoassinado
+
+Para criar o certificado que será utilizado para autenticidade execute o seguinte comando:
+```sh
+openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365 
+```
+
 ### Running the Application
 
 1. Clone the repository:
