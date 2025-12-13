@@ -1,10 +1,24 @@
 # Use a minimal base image
-FROM busybox:latest
+FROM golang:1.25.5-trixie AS build-stage
 
-# Copy the pre-built binary
-# Build the binary first with: make build-server
-COPY server-linux /server
+WORKDIR /server
+
+COPY go.mod go.sum ./
+
+RUN go mod download
+
+COPY *.go ./
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o /api
+
+FROM gcr.io/distroless/base-debian13 AS build-release-stage
+
+WORKDIR / 
+
+COPY --from=build-stage /api /api
 
 EXPOSE 8080
 
-CMD ["/server"]
+USER nonroot:nonroot
+
+CMD ["/api"]
