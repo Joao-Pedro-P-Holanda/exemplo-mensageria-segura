@@ -1,0 +1,54 @@
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: chat-server
+    ports:
+      - "8080:8080"
+    networks:
+      - chat-network
+    restart: unless-stopped
+
+  client1:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: chat-client-1
+    ports:
+      - "3001:80"
+    networks:
+      - chat-network
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  client2:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: chat-client-2
+    ports:
+      - "3002:80"
+    networks:
+      - chat-network
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  client3:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: chat-client-3
+    ports:
+      - "3003:80"
+    networks:
+      - chat-network
+    depends_on:
+      - server
+    restart: unless-stopped
+
+networks:
+  chat-network:
+    driver: bridge
