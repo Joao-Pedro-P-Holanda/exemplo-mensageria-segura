@@ -1,11 +1,18 @@
+FROM node:alpine AS bundle-stage
+
+
+COPY package*.json ./
+
+RUN npm install
+
+COPY . .
+
+RUN npm run build
+
 FROM nginx:alpine
 
 # Copy the static files to nginx html directory
-COPY index.html /usr/share/nginx/html/
-COPY styles.css /usr/share/nginx/html/
-COPY app.js /usr/share/nginx/html/
-COPY htmx.min.js /usr/share/nginx/html/
-
+COPY --from=bundle-stage dist /usr/share/nginx/html/
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
