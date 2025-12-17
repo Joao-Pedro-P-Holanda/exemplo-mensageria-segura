@@ -2,7 +2,8 @@ package main
 
 import (
 	"crypto"
-	"crypto/ecdh"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -12,11 +13,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"math/big"
 	"os"
 )
-
-var serverCurve = ecdh.X25519()
 
 /*
 Verifies if the data received was signed with the public certificate
@@ -32,25 +33,6 @@ func DecryptData(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
 	}
 	return decryptedData, nil
-}
-
-/*
-Generates a public ephemeral key signed with the RSA private key
-*/
-func GenerateEphemeralKey() ([]byte, error) {
-
-	certificateKey, err := readCertificateKey("key.pem")
-	if err != nil {
-		return nil, err
-	}
-
-	privateKey, err := serverCurve.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	publickKey := privateKey.PublicKey()
-
-	return rsa.SignPKCS1v15(rand.Reader, certificateKey, crypto.SHA256, publickKey.Bytes())
 }
 
 func readCertificateKey(filename string) (*rsa.PrivateKey, error) {
@@ -112,6 +94,122 @@ func ExportPublicKeyToJWK(pubKey *ecdsa.PublicKey) (map[string]interface{}, erro
 	}
 
 	return jwk, nil
+}
+
+func jwkToPublicKey(jwk map[string]interface{}) (*ecdsa.PublicKey, error) {
+	xRaw, okX := jwk["x"].(string)
+	yRaw, okY := jwk["y"].(string)
+	if !okX || !okY {
+		return nil, errors.New("missing coordinates in JWK")
+	}
+
+	xBytes, err := base64.RawURLEncoding.DecodeString(xRaw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode x coord: %w", err)
+	}
+	yBytes, err := base64.RawURLEncoding.DecodeString(yRaw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode y coord: %w", err)
+	}
+
+	curve := elliptic.P256()
+	x := new(big.Int).SetBytes(xBytes)
+	y := new(big.Int).SetBytes(yBytes)
+	if !curve.IsOnCurve(x, y) {
+		return nil, errors.New("client public key not on curve")
+	}
+
+	return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil
+}
+
+func DeriveSharedSecret(serverPriv *ecdsa.PrivateKey, clientJWK map[string]interface{}) ([]byte, error) {
+	clientPub, err := jwkToPublicKey(clientJWK)
+	if err != nil {
+		return nil, err
+	}
+
+	curve := elliptic.P256()
+	sx, _ := curve.ScalarMult(clientPub.X, clientPub.Y, serverPriv.D.Bytes())
+	if sx == nil {
+		return nil, errors.New("failed to derive shared secret")
+	}
+
+	// Ensure 32-byte output
+	secret := sx.Bytes()
+	if len(secret) < 32 {
+		padded := make([]byte, 32)
+		copy(padded[32-len(secret):], secret)
+		secret = padded
+	}
+
+	return secret, nil
+}
+
+func DeriveSymmetricKey(sharedSecret []byte, salt []byte) ([]byte, error) {
+	h := sha256.New()
+	if _, err := h.Write(salt); err != nil {
+		return nil, fmt.Errorf("failed to hash salt: %w", err)
+	}
+	if _, err := h.Write(sharedSecret); err != nil {
+		return nil, fmt.Errorf("failed to hash secret: %w", err)
+	}
+	return h.Sum(nil), nil
+}
+
+func EncryptWithSymmetric(key []byte, plaintext []byte) (string, string, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to init gcm: %w", err)
+	}
+
+	iv := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(iv); err != nil {
+		return "", "", fmt.Errorf("failed to create iv: %w", err)
+	}
+
+	ciphertext := gcm.Seal(nil, iv, plaintext, nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), base64.StdEncoding.EncodeToString(iv), nil
+}
+
+func DecryptWithSymmetric(key []byte, ciphertextB64 string, ivB64 string) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init gcm: %w", err)
+	}
+
+	ciphertext, err := base64.StdEncoding.DecodeString(ciphertextB64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode ciphertext: %w", err)
+	}
+	iv, err := base64.StdEncoding.DecodeString(ivB64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode iv: %w", err)
+	}
+
+	plaintext, err := gcm.Open(nil, iv, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+func generateSessionID() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("failed to generate session id: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 // SignDataWithRSA signs data using RSA private key
