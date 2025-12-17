@@ -25,15 +25,16 @@
 			</div>
 
 			<div class="chat-section" id="chat-section" style="display: none;">
-				<div id="chat-container" hx-ext="ws">
-					<div class="messages-container" id="messages" hx-swap-oob="beforeend">
+				<div id="chat-container" hx-ext="ws" ws-connect="ws://localhost:8080/ws">
+					<div class="messages-container" id="messages">
 						<!-- Messages will appear here dynamically -->
 					</div>
-					<div class="input-section">
-						<input type="hidden" id="hidden-username">
-						<input type="text" id="message-input" placeholder="Type your message..." maxlength="500" autocomplete="off">
-						<button id="send-btn">Send</button>
-					</div>
+					<form class="input-section" ws-send>
+						<input type="hidden" name="username" id="hidden-username">
+						<input type="hidden" name="type" value="chat">
+						<input type="text" name="content" id="message-input" placeholder="Type your message..." maxlength="500" autocomplete="off">
+						<button id="send-btn" type="submit">Send</button>
+					</form>
 				</div>
 			</div>
 		</div>

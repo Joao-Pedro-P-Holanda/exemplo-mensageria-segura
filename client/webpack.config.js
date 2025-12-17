@@ -27,7 +27,7 @@ module.exports = {
       },
       { 
         test: /\.pem$/i,
-        use: ['asset/source']
+        type: 'asset/source'
       }
     ],
   },

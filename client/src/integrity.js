@@ -1,26 +1,30 @@
+import pem from "./cert.pem"
+
 /**
  * Generates an ephemeral key pair using Web Crypto API
  * @returns {Promise<Object>} Object containing privateKey and publicKey in JWK format
  */
-async function generateEphemeralKey() {
-    const keyPair = await window.crypto.subtle.generateKey(
+async function generateKeyPair() {
+    return await window.crypto.subtle.generateKey(
         {
-            name: "ECDSA",
+            name: "ECDH",
             namedCurve: "P-256" // secp256k1 is not supported in Web Crypto, using P-256
         },
         true, // extractable
-        ["sign", "verify"]
+        ["deriveKey", "deriveBits"]
     );
+}
 
-    // Export keys to JWK format
-    const privateKey = await window.crypto.subtle.exportKey("jwk", keyPair.privateKey);
-    const publicKey = await window.crypto.subtle.exportKey("jwk", keyPair.publicKey);
 
-    return {
+async function generateEphemeralSecret(privateKey, publicKey) {
+    return await crypto.subtle.deriveBits(
+        {
+            name: "ECDH",
+            public: publicKey
+        },
         privateKey,
-        publicKey,
-        createdAt: new Date().toISOString()
-    };
+        256
+    );
 }
 
 /**
@@ -29,9 +33,9 @@ async function generateEphemeralKey() {
  * @param {string} pemPublicKey - The server's public key in PEM format
  * @returns {Promise<string>} Base64 encoded encrypted data
  */
-async function encryptWithServerCert(data, pemPublicKey) {
+async function encryptWithServerCert(data) {
     // Remove PEM header/footer and decode base64
-    const pemContents = pemPublicKey
+    const pemContents = pem
         .replace(/-----BEGIN PUBLIC KEY-----/, '')
         .replace(/-----END PUBLIC KEY-----/, '')
         .replace(/\s/g, '');
@@ -76,6 +80,7 @@ async function encryptWithServerCert(data, pemPublicKey) {
 }
 
 export {
-    generateEphemeralKey,
+    generateKeyPair,
+    generateEphemeralSecret,
     encryptWithServerCert
 };

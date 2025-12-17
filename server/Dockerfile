@@ -16,6 +16,7 @@ FROM gcr.io/distroless/base-debian13 AS build-release-stage
 WORKDIR / 
 
 COPY --from=build-stage /api /api
+COPY key.pem ./key.pem
 
 EXPOSE 8080
 

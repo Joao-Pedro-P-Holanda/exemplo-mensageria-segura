@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
@@ -21,15 +22,24 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
-	conn *websocket.Conn
-	send chan []byte
-	hub  *Hub
+	conn             *websocket.Conn
+	send             chan []byte
+	hub              *Hub
+	ephemeralPrivKey interface{} // Store client's ephemeral private key
+	ephemeralPubKey  interface{} // Store client's ephemeral public key
+	clientPublicKey  interface{} // Store received client public key
 }
 
 type Message struct {
 	Username string `json:"username"`
 	Content  string `json:"content"`
-	Type     string `json:"type"` // "chat", "join", "leave"
+	Type     string `json:"type"` // "chat", "join", "leave", "key-exchange"
+}
+
+type KeyExchangeMessage struct {
+	Username  string                 `json:"username"`
+	PublicKey map[string]interface{} `json:"publicKey"` // Client's ephemeral public key in JWK format
+	Type      string                 `json:"type"`
 }
 
 type Hub struct {
@@ -107,8 +117,30 @@ func (c *Client) readPump() {
 			break
 		}
 
-		// Broadcast the message to all clients
-		c.hub.broadcast <- message
+		// Check if this is a key-exchange message
+		var msgType struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(message, &msgType); err == nil && msgType.Type == "key-exchange" {
+			// Handle key exchange
+			if err := c.handleKeyExchange(message); err != nil {
+				log.Printf("Error handling key exchange: %v", err)
+			}
+			continue
+		}
+
+		// Parse the message
+		var msg Message
+		if err := json.Unmarshal(message, &msg); err != nil {
+			log.Printf("Error unmarshaling message: %v", err)
+			continue
+		}
+
+		// Convert message to HTML fragment
+		htmlMessage := convertMessageToHTML(msg)
+
+		// Broadcast HTML to all clients
+		c.hub.broadcast <- []byte(htmlMessage)
 	}
 }
 
@@ -121,6 +153,68 @@ func (c *Client) writePump() {
 			return
 		}
 	}
+}
+
+func (c *Client) handleKeyExchange(message []byte) error {
+	var keyExchangeMsg KeyExchangeMessage
+	if err := json.Unmarshal(message, &keyExchangeMsg); err != nil {
+		return fmt.Errorf("failed to unmarshal key exchange message: %w", err)
+	}
+
+	log.Printf("Received key exchange from user: %s", keyExchangeMsg.Username)
+
+	// Store client's public key
+	c.clientPublicKey = keyExchangeMsg.PublicKey
+
+	// Generate server's ephemeral key pair
+	serverPrivKey, err := GenerateECDHKeyPair()
+	if err != nil {
+		return fmt.Errorf("failed to generate server key pair: %w", err)
+	}
+
+	c.ephemeralPrivKey = serverPrivKey
+	c.ephemeralPubKey = &serverPrivKey.PublicKey
+
+	// Export server's public key to JWK format
+	serverPubKeyJWK, err := ExportPublicKeyToJWK(&serverPrivKey.PublicKey)
+	if err != nil {
+		return fmt.Errorf("failed to export public key: %w", err)
+	}
+
+	// Generate salt (32 bytes)
+	salt, err := GenerateSalt(32)
+	if err != nil {
+		return fmt.Errorf("failed to generate salt: %w", err)
+	}
+
+	log.Printf("Generated salt: %s", salt)
+
+	// Create signed key exchange response
+	responseJSON, err := CreateKeyExchangeResponse(serverPubKeyJWK, salt)
+	if err != nil {
+		return fmt.Errorf("failed to create key exchange response: %w", err)
+	}
+
+	// Add type to response
+	var response map[string]interface{}
+	if err := json.Unmarshal(responseJSON, &response); err != nil {
+		return fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	response["type"] = "key-exchange-response"
+
+	// Marshal final response
+	finalResponse, err := json.Marshal(response)
+	if err != nil {
+		return fmt.Errorf("failed to marshal final response: %w", err)
+	}
+
+	// Send response directly to this client
+	if err := c.conn.WriteMessage(websocket.TextMessage, finalResponse); err != nil {
+		return fmt.Errorf("failed to send key exchange response: %w", err)
+	}
+
+	log.Printf("Sent key exchange response to user: %s", keyExchangeMsg.Username)
+	return nil
 }
 
 func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
@@ -200,6 +294,24 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 		DecryptedData: string(decryptedData),
 	})
 	log.Printf("Successfully decrypted data: %s", string(decryptedData))
+}
+
+func convertMessageToHTML(msg Message) string {
+	escapedUsername := html.EscapeString(msg.Username)
+	escapedContent := html.EscapeString(msg.Content)
+
+	if msg.Type == "join" || msg.Type == "leave" {
+		return fmt.Sprintf(`<div class="message system" hx-swap-oob="beforeend:#messages">
+			<div class="message-content">%s</div>
+		</div>`, escapedContent)
+	}
+
+	return fmt.Sprintf(`<div class="message" hx-swap-oob="beforeend:#messages">
+		<div class="message-header">
+			<strong>%s</strong>
+		</div>
+		<div class="message-content">%s</div>
+	</div>`, escapedUsername, escapedContent)
 }
 
 func main() {
