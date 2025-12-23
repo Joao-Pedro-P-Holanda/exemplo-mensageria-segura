@@ -19,6 +19,7 @@ function escapeHTML(value) {
     div.textContent = value;
     return div.innerHTML;
 }
+let clientId = process.env.WEBPACK_CLIENT_ID
 
 function appendMessage({ username: sender, content }) {
     const container = document.getElementById('messages');
