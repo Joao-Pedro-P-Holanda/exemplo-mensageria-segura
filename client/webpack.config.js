@@ -4,8 +4,15 @@ const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const path = require('path');
 
 module.exports = {
+  mode: 'development',
   dotenv: {
     prefix: 'WEBPACK_',
+  },
+  devServer: {
+    static: {
+      directory: path.join(__dirname, 'dist'),
+    },
+    port: 9000,
   },
   entry: './src/app.js',
   output: {

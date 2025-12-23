@@ -438,11 +438,15 @@ func main() {
 	port := ":8080"
 	fmt.Printf("WebSocket server starting on port %s\n", port)
 	handler := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3001"},
+		AllowedOrigins: []string{
+			"http://localhost:3001",
+			"http://localhost:3002",
+			"http://localhost:3003",
+			"http://localhost:9000",
+		},
 		AllowCredentials: true,
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type"},
-		Debug:            true,
 	}).Handler(mux)
 	log.Fatal(http.ListenAndServe(port, handler))
 }
