@@ -1,13 +1,10 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/cors"
@@ -19,47 +16,6 @@ var upgrader = websocket.Upgrader{
 		// In production, restrict this to specific allowed origins for security.
 		return true
 	},
-}
-
-type Client struct {
-	conn         *websocket.Conn
-	send         chan []byte
-	hub          *Hub
-	sessionID    string
-	symmetricKey []byte
-}
-
-type EncryptedMessage struct {
-	SessionID string `json:"sessionId"`
-	Content   string `json:"content"`
-	IV        string `json:"iv"`
-}
-
-type KeyExchangeRequest struct {
-	PublicKey map[string]any `json:"publicKey"`
-}
-
-type Hub struct {
-	clients    map[*Client]bool
-	broadcast  chan EncryptedMessage
-	register   chan *Client
-	unregister chan *Client
-	mutex      sync.RWMutex
-}
-
-type VerifyRequest struct {
-	EncryptedData string `json:"encryptedData"`
-}
-
-type VerifyResponse struct {
-	Success       bool   `json:"success"`
-	DecryptedData string `json:"decryptedData,omitempty"`
-	Error         string `json:"error,omitempty"`
-}
-
-type SessionStore struct {
-	mutex sync.RWMutex
-	keys  map[string][]byte
 }
 
 func (s *SessionStore) Set(id string, key []byte) {
@@ -104,26 +60,14 @@ func (h *Hub) run() {
 			h.mutex.Unlock()
 			log.Printf("Client disconnected. Total clients: %d", len(h.clients))
 
-		case message := <-h.broadcast:
+		case encrypted := <-h.broadcast:
 			h.mutex.Lock()
 			for client := range h.clients {
 				if client.symmetricKey == nil {
 					continue
 				}
 
-				payload, err := json.Marshal(message)
-				if err != nil {
-					log.Printf("failed to marshal broadcast payload: %v", err)
-					continue
-				}
-
-				ciphertext, iv, err := EncryptWithSymmetric(client.symmetricKey, payload)
-				if err != nil {
-					log.Printf("failed to encrypt broadcast for client: %v", err)
-					continue
-				}
-
-				outgoing := EncryptedMessage{Content: ciphertext, IV: iv}
+				outgoing := encrypted
 				frame, err := json.Marshal(outgoing)
 				if err != nil {
 					log.Printf("failed to marshal encrypted broadcast: %v", err)
@@ -131,6 +75,7 @@ func (h *Hub) run() {
 				}
 
 				select {
+				// TODO: send as JSON instead of string to be parsed on client
 				case client.send <- frame:
 				default:
 					close(client.send)
@@ -150,18 +95,12 @@ func (c *Client) readPump() {
 
 	for {
 		_, message, err := c.conn.ReadMessage()
-		print("Mensagem recebida")
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
 			}
 			break
 		}
-
-		strMessage := string(message)
-
-		print("%s\n", strMessage)
-
 		var encryptedMsg EncryptedMessage
 		if err := json.Unmarshal(message, &encryptedMsg); err != nil {
 			log.Printf("invalid websocket payload: %v", err)
@@ -180,20 +119,12 @@ func (c *Client) readPump() {
 			continue
 		}
 
-		plaintext, err := DecryptWithSymmetric(symKey, encryptedMsg.Content, encryptedMsg.IV)
-		if err != nil {
-			log.Printf("failed to decrypt payload: %v", err)
-			continue
-		}
-		log.Printf("Decrypted message with text %s", plaintext)
-
 		if c.sessionID == "" {
 			c.sessionID = encryptedMsg.SessionID
 			c.symmetricKey = symKey
 		}
 
-		// TODO: send message only
-
+		// TODO: send message only to the chat members
 		c.hub.broadcast <- encryptedMsg
 	}
 }
@@ -224,167 +155,6 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	go client.readPump()
 }
 
-func verifyHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(VerifyResponse{
-			Success: false,
-			Error:   "Method not allowed",
-		})
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(VerifyResponse{
-			Success: false,
-			Error:   "Error reading request body",
-		})
-		return
-	}
-	defer r.Body.Close()
-
-	var req VerifyRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(VerifyResponse{
-			Success: false,
-			Error:   "Invalid JSON",
-		})
-		return
-	}
-
-	// Decode base64 encrypted data
-	encryptedData, err := base64.StdEncoding.DecodeString(req.EncryptedData)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(VerifyResponse{
-			Success: false,
-			Error:   "Invalid base64 encoding",
-		})
-		return
-	}
-
-	// Try to decrypt
-	decryptedData, err := DecryptData(encryptedData)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(VerifyResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Failed to decrypt data: %v", err),
-		})
-		return
-	}
-
-	// Success - return 200
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(VerifyResponse{
-		Success:       true,
-		DecryptedData: string(decryptedData),
-	})
-	log.Printf("Successfully decrypted data: %s", string(decryptedData))
-}
-
-func keyExchangeHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-		return
-	}
-
-	defer r.Body.Close()
-	var req KeyExchangeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
-		return
-	}
-
-	serverPriv, err := GenerateECDHKeyPair()
-	if err != nil {
-		log.Printf("failed to generate server key pair: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to generate server keys"})
-		return
-	}
-
-	serverPubJWK, err := ExportPublicKeyToJWK(&serverPriv.PublicKey)
-	if err != nil {
-		log.Printf("failed to export server public key: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to export public key"})
-		return
-	}
-
-	sharedSecret, err := DeriveSharedSecret(serverPriv, req.PublicKey)
-	if err != nil {
-		log.Printf("failed to derive shared secret: %v", err)
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid client public key"})
-		return
-	}
-
-	salt, err := GenerateSalt(32)
-	if err != nil {
-		log.Printf("failed to generate salt: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to generate salt"})
-		return
-	}
-
-	saltBytes, err := base64.StdEncoding.DecodeString(salt)
-	if err != nil {
-		log.Printf("failed to decode salt: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to handle salt"})
-		return
-	}
-
-	symmetricKey, err := DeriveSymmetricKey(sharedSecret, saltBytes)
-	if err != nil {
-		log.Printf("failed to derive symmetric key: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to derive key"})
-		return
-	}
-
-	sessionID, err := generateSessionID()
-	if err != nil {
-		log.Printf("failed to generate session id: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create session"})
-		return
-	}
-
-	sessionStore.Set(sessionID, symmetricKey)
-
-	responseJSON, err := CreateKeyExchangeResponse(serverPubJWK, salt)
-	if err != nil {
-		log.Printf("failed to sign exchange: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to build response"})
-		return
-	}
-
-	var response map[string]any
-	if err := json.Unmarshal(responseJSON, &response); err != nil {
-		log.Printf("failed to unmarshal signed response: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to finalize response"})
-		return
-	}
-
-	response["sessionId"] = sessionID
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
 func main() {
 	hub := newHub()
 	go hub.run()
@@ -394,16 +164,11 @@ func main() {
 		serveWs(hub, w, r)
 	})
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
-
-	mux.HandleFunc("/verify", verifyHandler)
-	mux.HandleFunc("/key-exchange", keyExchangeHandler)
+	mux.HandleFunc("/key-exchange", KeyExchangeHandler)
 
 	port := ":8080"
 	fmt.Printf("WebSocket server starting on port %s\n", port)
+
 	handler := cors.New(cors.Options{
 		AllowedOrigins: []string{
 			"http://localhost:3001",
@@ -415,5 +180,6 @@ func main() {
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type"},
 	}).Handler(mux)
+
 	log.Fatal(http.ListenAndServe(port, handler))
 }

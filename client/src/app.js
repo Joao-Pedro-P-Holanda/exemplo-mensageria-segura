@@ -4,7 +4,9 @@ import {
     importServerPublicKey,
     deriveSymmetricKey,
     encryptWithAesGcm,
-    decryptWithAesGcm
+    decryptWithAesGcm,
+    encryptWithServerCert,
+    verifyServerSignature
 } from "./integrity";
 import './styles.css';
 
@@ -49,7 +51,7 @@ async function ensureHandshake() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ publicKey: publicJwk })
+            body: JSON.stringify({ content: await encryptWithServerCert(JSON.stringify(publicJwk)) })
         });
 
         if (!response.ok) {
@@ -57,6 +59,11 @@ async function ensureHandshake() {
         }
 
         const data = await response.json();
+
+        if (!verifyServerSignature(data["signature"])) {
+            throw new Error("Signature don't match content");
+        }
+
         sessionId = data.sessionId;
 
         const serverPublicKey = await importServerPublicKey(data.serverPublicKey);
@@ -150,11 +157,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             const { ciphertext, iv } = await encryptWithAesGcm(symmetricKey, payload);
-            event.detail.parameters = {
-                sessionId,
-                content: ciphertext,
-                iv,
-            }
             event.detail.socketWrapper.sendImmediately(JSON.stringify({
                 sessionId,
                 content: ciphertext,
@@ -174,15 +176,17 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             let incoming = event.detail.message;
+
             if (typeof incoming === 'string') {
                 incoming = JSON.parse(incoming);
             }
 
-            if (!incoming || !incoming.payload || !incoming.iv) {
+            // Server sends { content, iv } as the encrypted frame
+            if (!incoming || !incoming.content || !incoming.iv) {
                 return;
             }
 
-            const plaintext = await decryptWithAesGcm(symmetricKey, incoming.payload, incoming.iv);
+            const plaintext = await decryptWithAesGcm(symmetricKey, incoming.content, incoming.iv);
             const parsed = JSON.parse(plaintext);
             appendMessage(parsed);
 

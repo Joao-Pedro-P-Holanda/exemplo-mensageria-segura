@@ -108,31 +108,28 @@ async function decryptWithAesGcm(key, ciphertextB64, ivB64) {
  * @returns {Promise<string>} Base64 encoded encrypted data
  */
 async function encryptWithServerCert(data) {
-    // Remove PEM header/footer and decode base64
-    const pemContents = pem
-        .replace(/-----BEGIN PUBLIC KEY-----/, '')
-        .replace(/-----END PUBLIC KEY-----/, '')
-        .replace(/\s/g, '');
+    const pemHeader = "-----BEGIN PUBLIC KEY-----";
+    const pemFooter = "-----END PUBLIC KEY-----";
+    const pemContents = pem.substring(
+        pemHeader.length,
+        pem.length - pemFooter.length - 1,
+    )
+    // base64 decode the string to get the binary data
+    const binaryDerString = window.atob(pemContents);
+    // convert from a binary string to an ArrayBuffer
+    const binaryDer = str2ab(binaryDerString);
 
-    const binaryDer = atob(pemContents);
-    const binaryArray = new Uint8Array(binaryDer.length);
-    for (let i = 0; i < binaryDer.length; i++) {
-        binaryArray[i] = binaryDer.charCodeAt(i);
-    }
-
-    // Import the public key
     const publicKey = await window.crypto.subtle.importKey(
         "spki",
-        binaryArray.buffer,
+        binaryDer,
         {
             name: "RSA-OAEP",
             hash: "SHA-256"
         },
-        false,
+        true,
         ["encrypt"]
     );
 
-    // Encrypt the data
     const encoder = new TextEncoder();
     const dataBuffer = encoder.encode(data);
 
@@ -144,13 +141,25 @@ async function encryptWithServerCert(data) {
         dataBuffer
     );
 
-    // Convert to base64
-    const encryptedArray = new Uint8Array(encrypted);
-    let binaryString = '';
-    for (let i = 0; i < encryptedArray.length; i++) {
-        binaryString += String.fromCharCode(encryptedArray[i]);
+    return window.btoa(ab2str(encrypted));
+}
+
+// TODO: Check if the signature corresponds to the content with AEAD
+function verifyServerSignature(signature, content) {
+    return true
+}
+
+function str2ab(str) {
+    const buf = new ArrayBuffer(str.length);
+    const bufView = new Uint8Array(buf);
+    for (let i = 0, strLen = str.length; i < strLen; i++) {
+        bufView[i] = str.charCodeAt(i);
     }
-    return btoa(binaryString);
+    return buf;
+}
+
+function ab2str(buf) {
+    return String.fromCharCode.apply(null, new Uint8Array(buf));
 }
 
 export {
@@ -160,5 +169,6 @@ export {
     deriveSymmetricKey,
     encryptWithAesGcm,
     decryptWithAesGcm,
-    encryptWithServerCert
+    encryptWithServerCert,
+    verifyServerSignature
 };
