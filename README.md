@@ -38,9 +38,11 @@ exemplo-mensageria-segura/
 
 #### Gerando certificado autoassinado
 
-Para criar o certificado que será utilizado para autenticidade execute o seguinte comando:
+Para criar o certificado que será utilizado para autenticidade execute o seguinte comando
+no diretório principal:
 ```sh
-openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365 
+openssl genrsa -out server/key.pem 2048 
+openssl rsa -in server/key.pem -outform PEM -pubout -out client/src/cert.pem
 ```
 
 ### Running the Application
