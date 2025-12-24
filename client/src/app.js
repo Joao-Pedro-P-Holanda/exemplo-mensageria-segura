@@ -77,9 +77,6 @@ function joinChat() {
         return;
     }
 
-    // Set the hidden username field for form submission
-    document.getElementById('hidden-username').value = username;
-
     // Hide login section and show chat section
     document.getElementById('login-section').style.display = 'none';
     document.getElementById('chat-section').style.display = 'flex';
@@ -100,6 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const usernameInput = document.getElementById('username-input');
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('status-text');
+    const chatContainer = document.getElementById('chat-container');
 
     // Join button click
     joinBtn.addEventListener('click', joinChat);
@@ -112,7 +110,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // WebSocket open
-    document.body.addEventListener('htmx:wsOpen', () => {
+    document.body.addEventListener('htmx:wsOpen', async () => {
+        await ensureHandshake()
         console.log('WebSocket connected');
         statusDot.classList.remove('disconnected');
         statusDot.classList.add('connected');
@@ -136,31 +135,34 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Encrypt messages right before htmx sends them over the socket
-    document.body.addEventListener('htmx:wsConfigSend', async (event) => {
+    chatContainer.addEventListener('htmx:wsConfigSend', async (event) => {
         try {
-            await ensureHandshake();
+            event.preventDefault();
+
+            htmx.trigger("#message-form", "htmx:abort")
+
             if (!symmetricKey) {
                 throw new Error('Symmetric key unavailable');
             }
-
-            const outgoing = event.detail.message || {};
             const payload = JSON.stringify({
-                username: outgoing.username || username,
-                content: outgoing.content || '',
-                type: outgoing.type || 'chat'
+                username: username,
+                content: document.getElementById("message-input").value,
             });
 
             const { ciphertext, iv } = await encryptWithAesGcm(symmetricKey, payload);
-            event.detail.message = {
+            event.detail.parameters = {
                 sessionId,
-                payload: ciphertext,
+                content: ciphertext,
                 iv,
-                type: 'encrypted-chat'
-            };
-            htmx.logAll();
+            }
+            event.detail.socketWrapper.sendImmediately(JSON.stringify({
+                sessionId,
+                content: ciphertext,
+                iv,
+            }));
+
         } catch (err) {
             console.error('Failed to encrypt outgoing message', err);
-            event.preventDefault();
         }
     });
 

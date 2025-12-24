@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"log"
 	"net/http"
@@ -30,26 +29,19 @@ type Client struct {
 	symmetricKey []byte
 }
 
-type Message struct {
-	Username string `json:"username"`
-	Content  string `json:"content"`
-	Type     string `json:"type"` // "chat", "join", "leave", "key-exchange"
-}
-
 type EncryptedMessage struct {
 	SessionID string `json:"sessionId"`
-	Payload   string `json:"payload"`
+	Content   string `json:"content"`
 	IV        string `json:"iv"`
-	Type      string `json:"type"`
 }
 
 type KeyExchangeRequest struct {
-	PublicKey map[string]interface{} `json:"publicKey"`
+	PublicKey map[string]any `json:"publicKey"`
 }
 
 type Hub struct {
 	clients    map[*Client]bool
-	broadcast  chan Message
+	broadcast  chan EncryptedMessage
 	register   chan *Client
 	unregister chan *Client
 	mutex      sync.RWMutex
@@ -87,7 +79,7 @@ var sessionStore = &SessionStore{keys: make(map[string][]byte)}
 
 func newHub() *Hub {
 	return &Hub{
-		broadcast:  make(chan Message),
+		broadcast:  make(chan EncryptedMessage),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
@@ -131,7 +123,7 @@ func (h *Hub) run() {
 					continue
 				}
 
-				outgoing := EncryptedMessage{Type: "encrypted-chat", Payload: ciphertext, IV: iv}
+				outgoing := EncryptedMessage{Content: ciphertext, IV: iv}
 				frame, err := json.Marshal(outgoing)
 				if err != nil {
 					log.Printf("failed to marshal encrypted broadcast: %v", err)
@@ -158,12 +150,17 @@ func (c *Client) readPump() {
 
 	for {
 		_, message, err := c.conn.ReadMessage()
+		print("Mensagem recebida")
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
 			}
 			break
 		}
+
+		strMessage := string(message)
+
+		print("%s\n", strMessage)
 
 		var encryptedMsg EncryptedMessage
 		if err := json.Unmarshal(message, &encryptedMsg); err != nil {
@@ -172,13 +169,8 @@ func (c *Client) readPump() {
 		}
 
 		// If payload is missing, this is likely an unencrypted message (e.g. client missed handshake). Ignore but do not spam logs.
-		if encryptedMsg.Payload == "" || encryptedMsg.IV == "" {
-			log.Printf("dropping unencrypted message of type %s; handshake likely not completed", encryptedMsg.Type)
-			continue
-		}
-
-		if encryptedMsg.Type != "encrypted-chat" {
-			log.Printf("unsupported message type: %s", encryptedMsg.Type)
+		if encryptedMsg.Content == "" || encryptedMsg.IV == "" {
+			log.Printf("dropping unencrypted message of type; handshake likely not completed")
 			continue
 		}
 
@@ -188,28 +180,21 @@ func (c *Client) readPump() {
 			continue
 		}
 
-		plaintext, err := DecryptWithSymmetric(symKey, encryptedMsg.Payload, encryptedMsg.IV)
+		plaintext, err := DecryptWithSymmetric(symKey, encryptedMsg.Content, encryptedMsg.IV)
 		if err != nil {
 			log.Printf("failed to decrypt payload: %v", err)
 			continue
 		}
-
-		var msg Message
-		if err := json.Unmarshal(plaintext, &msg); err != nil {
-			log.Printf("failed to unmarshal decrypted message: %v", err)
-			continue
-		}
-
-		if msg.Type == "" {
-			msg.Type = "chat"
-		}
+		log.Printf("Decrypted message with text %s", plaintext)
 
 		if c.sessionID == "" {
 			c.sessionID = encryptedMsg.SessionID
 			c.symmetricKey = symKey
 		}
 
-		c.hub.broadcast <- msg
+		// TODO: send message only
+
+		c.hub.broadcast <- encryptedMsg
 	}
 }
 
@@ -386,7 +371,7 @@ func keyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var response map[string]interface{}
+	var response map[string]any
 	if err := json.Unmarshal(responseJSON, &response); err != nil {
 		log.Printf("failed to unmarshal signed response: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -398,24 +383,6 @@ func keyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
-}
-
-func convertMessageToHTML(msg Message) string {
-	escapedUsername := html.EscapeString(msg.Username)
-	escapedContent := html.EscapeString(msg.Content)
-
-	if msg.Type == "join" || msg.Type == "leave" {
-		return fmt.Sprintf(`<div class="message system" hx-swap-oob="beforeend:#messages">
-			<div class="message-content">%s</div>
-		</div>`, escapedContent)
-	}
-
-	return fmt.Sprintf(`<div class="message" hx-swap-oob="beforeend:#messages">
-		<div class="message-header">
-			<strong>%s</strong>
-		</div>
-		<div class="message-content">%s</div>
-	</div>`, escapedUsername, escapedContent)
 }
 
 func main() {

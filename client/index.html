@@ -29,9 +29,7 @@
 					<div class="messages-container" id="messages">
 						<!-- Messages will appear here dynamically -->
 					</div>
-					<form class="input-section" ws-send>
-						<input type="hidden" name="username" id="hidden-username">
-						<input type="hidden" name="type" value="chat">
+					<form id='message-form' class="input-section" ws-send>
 						<input type="text" name="content" id="message-input" placeholder="Type your message..." maxlength="500" autocomplete="off">
 						<button id="send-btn" type="submit">Send</button>
 					</form>
