@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"mensageria_segura/internal"
+	"mensageria_segura/internal/database"
 	"mensageria_segura/internal/key_exchange"
 	"net/http"
 )
@@ -52,6 +53,9 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 	decryptedJWKBytes, err := internal.DecryptWithPrivateCertificate(req.Content)
 	if err != nil {
 		log.Printf("could not decrypt client public jwk %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid encrypted content"})
+		return
 	}
 
 	clientPub, err := key_exchange.ConvertJWKToECDHPublic(decryptedJWKBytes)
@@ -110,7 +114,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, err := generateSessionID()
+	sessionID, err := database.CreateSession(database.DB, req.ClientId, salt, symmetricKey)
 	if err != nil {
 		log.Printf("failed to generate session id: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)

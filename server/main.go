@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"mensageria_segura/internal/database"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -18,20 +19,20 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func (s *SessionStore) Set(id string, key []byte) {
+func (s *SessionStore) Set(id int, key []byte) {
 	s.mutex.Lock()
 	s.keys[id] = key
 	s.mutex.Unlock()
 }
 
-func (s *SessionStore) Get(id string) ([]byte, bool) {
+func (s *SessionStore) Get(id int) ([]byte, bool) {
 	s.mutex.RLock()
 	key, ok := s.keys[id]
 	s.mutex.RUnlock()
 	return key, ok
 }
 
-var sessionStore = &SessionStore{keys: make(map[string][]byte)}
+var sessionStore = &SessionStore{keys: make(map[int][]byte)}
 
 func newHub() *Hub {
 	return &Hub{
@@ -113,14 +114,13 @@ func (c *Client) readPump() {
 			continue
 		}
 
-		symKey, ok := sessionStore.Get(encryptedMsg.SessionID)
+		_, symKey, ok, _ := database.GetSession(database.DB, encryptedMsg.SessionID)
 		if !ok {
-			log.Printf("unknown session id: %s", encryptedMsg.SessionID)
+			log.Printf("unknown session id: %d", encryptedMsg.SessionID)
 			continue
 		}
 
 		if c.sessionID == "" {
-			c.sessionID = encryptedMsg.SessionID
 			c.symmetricKey = symKey
 		}
 
@@ -156,6 +156,10 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	if _, err := database.InitInMemory(); err != nil {
+		log.Fatalf("failed to initialize database: %v", err)
+	}
+
 	hub := newHub()
 	go hub.run()
 

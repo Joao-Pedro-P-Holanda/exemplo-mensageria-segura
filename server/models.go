@@ -15,7 +15,7 @@ type Client struct {
 }
 
 type EncryptedMessage struct {
-	SessionID string `json:"sessionId"`
+	SessionID int    `json:"sessionId"`
 	Content   string `json:"content"`
 	IV        string `json:"iv"`
 }
@@ -26,7 +26,8 @@ type ChatMessage struct {
 }
 
 type KeyExchangeRequest struct {
-	Content string `json:"content"`
+	ClientId string `json:"clientId,omitempty"`
+	Content  string `json:"content"`
 }
 
 type Hub struct {
@@ -39,7 +40,7 @@ type Hub struct {
 
 type SessionStore struct {
 	mutex sync.RWMutex
-	keys  map[string][]byte
+	keys  map[int][]byte
 }
 
 type JWK struct {
