@@ -8,6 +8,9 @@ import {
     encryptWithServerCert,
     verifyServerSignature
 } from "./integrity";
+import {
+    generateNonce
+} from "./utils"
 import './styles.css';
 
 let username = '';
@@ -153,6 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const payload = JSON.stringify({
                 username: username,
+                nonce: generateNonce(12),
                 content: document.getElementById("message-input").value,
             });
 
