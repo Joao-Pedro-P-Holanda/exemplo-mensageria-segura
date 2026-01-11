@@ -43,6 +43,16 @@ no diretório principal:
 ```sh
 openssl genrsa -out server/key.pem 2048 
 openssl rsa -in server/key.pem -outform PEM -pubout -out client/src/cert.pem
+chmod 666 server/key.pem # necessário para realizar a leitura no container
+```
+
+#### Configurando SQLite para o contâiner do servidor
+
+- Criar arquivo data/sessions.db na raíz do projeto
+- Fornecer permissão para escrita:
+```
+chmod 666 data/sessions.db
+chmod 777 data
 ```
 
 ### Running the Application

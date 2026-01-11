@@ -9,7 +9,7 @@ RUN go mod download
 
 COPY . ./
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o /api
+RUN CGO_ENABLED=1 GOOS=linux go build -tags="fts5"  -o /api
 
 FROM gcr.io/distroless/base-debian13 AS build-release-stage
 

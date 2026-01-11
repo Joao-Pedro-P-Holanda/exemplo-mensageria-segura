@@ -4,11 +4,15 @@ services:
       context: ./server
       dockerfile: Dockerfile
     container_name: chat-server
+    environment:
+        DATABASE_URL: /data/sessions.db
     ports:
       - "8080:8080"
     networks:
       - chat-network
     restart: unless-stopped
+    volumes:
+      - ./data:/data
 
   client1:
     build:
@@ -52,3 +56,6 @@ services:
 networks:
   chat-network:
     driver: bridge
+
+volumes:
+  db-data:
