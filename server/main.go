@@ -32,8 +32,6 @@ func (s *SessionStore) Get(id int) ([]byte, bool) {
 	return key, ok
 }
 
-var sessionStore = &SessionStore{keys: make(map[int][]byte)}
-
 func newHub() *Hub {
 	return &Hub{
 		broadcast:  make(chan EncryptedMessage),

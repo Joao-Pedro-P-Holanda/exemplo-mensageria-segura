@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/ecdh"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -122,8 +121,6 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionStore.Set(sessionID, symmetricKey)
-
 	responseJSON, err := key_exchange.CreateKeyExchangeResponse(serverPubJWKMap, salt)
 	if err != nil {
 		log.Printf("failed to sign exchange: %v", err)
@@ -144,12 +141,4 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
-}
-
-func generateSessionID() (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("failed to generate session id: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
