@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -17,7 +18,13 @@ func OpenInMemory() (*sql.DB, error) {
 	var initErr error
 	once.Do(func() {
 		// Shared cache so multiple connections within the same process can see the same in-memory DB.
-		conn, err := sql.Open("sqlite", "file:sessions.db?cache=shared")
+		databaseUrl, set := os.LookupEnv("DATABASE_URL")
+		if !set {
+			databaseUrl = "file:sessions.db?cache=shared"
+		}
+		fmt.Println(databaseUrl)
+		conn, err := sql.Open("sqlite", databaseUrl)
+		conn.SetMaxOpenConns(1)
 		if err != nil {
 			initErr = fmt.Errorf("open sqlite in-memory: %w", err)
 			return
