@@ -41,38 +41,62 @@ function appendMessage({ username: sender, content }) {
 
 async function ensureHandshake() {
     if (symmetricKey) return;
-    if (handshakePromise) {
-        return handshakePromise;
-    }
+    if (handshakePromise) return handshakePromise;
 
     handshakePromise = (async () => {
         clientKeys = await generateKeyPair();
-        const publicJwk = await crypto.subtle.exportKey("jwk", clientKeys.publicKey);
+        const publicJwk =
+            await crypto.subtle.exportKey("jwk", clientKeys.publicKey);
 
-        const response = await fetch('http://localhost:8080/key-exchange', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ content: await encryptWithServerCert(JSON.stringify(publicJwk)) })
-        });
+        const response = await fetch(
+            "http://localhost:8080/key-exchange",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    content: await encryptWithServerCert(
+                        JSON.stringify(publicJwk)
+                    )
+                })
+            }
+        );
 
         if (!response.ok) {
-            throw new Error('Failed to perform key exchange');
+            throw new Error("Failed to perform key exchange");
         }
 
         const data = await response.json();
 
-        if (!verifyServerSignature(data["signature"])) {
-            throw new Error("Signature don't match content");
+        const {
+            serverPublicKey,
+            salt,
+            signature,
+            sessionId: receivedSessionId
+        } = data;
+
+        const ok = await verifyServerSignature(
+            signature,
+            { serverPublicKey, salt }
+        );
+
+        if (!ok) {
+            throw new Error("Servidor não autenticado");
         }
 
-        sessionId = data.sessionId;
+        sessionId = receivedSessionId;
 
-        const serverPublicKey = await importServerPublicKey(data.serverPublicKey);
-        const sharedSecret = await generateEphemeralSecret(clientKeys.privateKey, serverPublicKey);
-        // Derive symmetric key using salt provided by server
-        symmetricKey = await deriveSymmetricKey(sharedSecret, data.salt);
+        const importedServerKey =
+            await importServerPublicKey(serverPublicKey);
+
+        const sharedSecret =
+            await generateEphemeralSecret(
+                clientKeys.privateKey,
+                importedServerKey
+            );
+
+        // 6. Deriva AES-GCM
+        symmetricKey =
+            await deriveSymmetricKey(sharedSecret, salt);
     })();
 
     await handshakePromise;

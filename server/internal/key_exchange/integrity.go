@@ -168,29 +168,32 @@ func DecryptWithSymmetric(key []byte, ciphertextB64 string, ivB64 string) ([]byt
 }
 
 // CreateKeyExchangeResponse creates a signed key exchange response
-func CreateKeyExchangeResponse(serverPublicKeyJWK map[string]any, salt string) ([]byte, error) {
-	// Create response structure
-	response := map[string]any{
+func CreateKeyExchangeResponse(
+	serverPublicKeyJWK map[string]any,
+	salt string,
+) ([]byte, error) {
+
+	payload := map[string]any{
 		"serverPublicKey": serverPublicKeyJWK,
 		"salt":            salt,
 	}
 
-	// Marshal to JSON
-	responseJSON, err := json.Marshal(response)
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal response: %w", err)
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	// Sign the response
-	signature, err := SignDataWithRSA(responseJSON)
+	signature, err := SignDataWithRSA(payloadBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign response: %w", err)
+		return nil, fmt.Errorf("failed to sign payload: %w", err)
 	}
 
-	// Add signature to response
-	response["signature"] = signature
+	response := map[string]any{
+		"serverPublicKey": serverPublicKeyJWK,
+		"salt":            salt,
+		"signature":       signature,
+	}
 
-	// Marshal final response
 	return json.Marshal(response)
 }
 

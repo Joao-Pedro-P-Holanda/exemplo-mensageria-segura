@@ -145,9 +145,39 @@ async function encryptWithServerCert(data) {
 }
 
 // TODO: Check if the signature corresponds to the content with AEAD
-function verifyServerSignature(signature, content) {
-    return true
+async function verifyServerSignature(signatureB64, content) {
+    const sig = base64ToBytes(signatureB64);
+
+    const pemHeader = "-----BEGIN PUBLIC KEY-----";
+    const pemFooter = "-----END PUBLIC KEY-----";
+    const pemContents = pem
+        .replace(pemHeader, "")
+        .replace(pemFooter, "")
+        .replace(/\s/g, "");
+
+    const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+
+    const publicKey = await crypto.subtle.importKey(
+        "spki",
+        binaryDer,
+        {
+            name: "RSASSA-PKCS1-v1_5",
+            hash: "SHA-256"
+        },
+        false,
+        ["verify"]
+    );
+
+    const encoded = new TextEncoder().encode(JSON.stringify(content));
+
+    return crypto.subtle.verify(
+        "RSASSA-PKCS1-v1_5",
+        publicKey,
+        sig,
+        encoded
+    );
 }
+
 
 function str2ab(str) {
     const buf = new ArrayBuffer(str.length);
