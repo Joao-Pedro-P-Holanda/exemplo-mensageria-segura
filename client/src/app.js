@@ -200,25 +200,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Decrypt incoming messages after htmx receives them
     document.body.addEventListener('htmx:wsAfterMessage', async (event) => {
         try {
-            if (!symmetricKey) {
-                return;
-            }
+            if (!symmetricKey) return;
 
-            // Server sends { content, iv } as the encrypted frame
-            if (!incoming || !incoming.content || !incoming.iv) {
-                return;
-            }
+            const incoming = JSON.parse(event.detail.message);
 
-            const plaintext = await decryptWithAesGcm(symmetricKey, incoming.content, incoming.iv);
+            if (!incoming.content || !incoming.iv) return;
+
+            const plaintext = await decryptWithAesGcm(
+                symmetricKey,
+                incoming.content,
+                incoming.iv
+            );
+
             const parsed = JSON.parse(plaintext);
             appendMessage(parsed);
 
-            if (event.detail) {
-                event.detail.shouldSwap = false;
-            }
+            event.detail.shouldSwap = false;
+
         } catch (err) {
             console.error('Failed to decrypt incoming message', err);
         }
