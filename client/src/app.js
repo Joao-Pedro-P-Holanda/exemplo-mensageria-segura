@@ -24,7 +24,6 @@ function escapeHTML(value) {
     div.textContent = value;
     return div.innerHTML;
 }
-let clientId = process.env.WEBPACK_CLIENT_ID
 
 function appendMessage({ username: sender, content }) {
     const container = document.getElementById('messages');
@@ -63,16 +62,45 @@ async function ensureHandshake() {
 
         const data = await response.json();
 
-        if (!verifyServerSignature(data["signature"])) {
-            throw new Error("Signature don't match content");
+        // base64 -> bytes
+        const payloadBytes = Uint8Array.from(
+            atob(data.payload),
+            c => c.charCodeAt(0)
+        );
+
+        const signatureBytes = Uint8Array.from(
+            atob(data.signature),
+            c => c.charCodeAt(0)
+        );
+
+        // verifica assinatura do payload
+        const valid = await verifyServerSignature(
+            signatureBytes,
+            payloadBytes
+        );
+
+        if (!valid) {
+            throw new Error("Servidor não autenticado");
         }
+
+        // agora sim, payload confiável
+        const payload = JSON.parse(
+            new TextDecoder().decode(payloadBytes)
+        );
+
+        const { serverPublicKey, salt } = payload;
 
         sessionId = data.sessionId;
 
-        const serverPublicKey = await importServerPublicKey(data.serverPublicKey);
-        const sharedSecret = await generateEphemeralSecret(clientKeys.privateKey, serverPublicKey);
-        // Derive symmetric key using salt provided by server
-        symmetricKey = await deriveSymmetricKey(sharedSecret, data.salt);
+// continua o fluxo normal
+const importedServerKey = await importServerPublicKey(serverPublicKey);
+const sharedSecret = await generateEphemeralSecret(
+    clientKeys.privateKey,
+    importedServerKey
+);
+
+symmetricKey = await deriveSymmetricKey(sharedSecret, salt);
+
     })();
 
     await handshakePromise;
@@ -177,12 +205,6 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             if (!symmetricKey) {
                 return;
-            }
-
-            let incoming = event.detail.message;
-
-            if (typeof incoming === 'string') {
-                incoming = JSON.parse(incoming);
             }
 
             // Server sends { content, iv } as the encrypted frame

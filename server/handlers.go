@@ -121,23 +121,30 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	responseJSON, err := key_exchange.CreateKeyExchangeResponse(serverPubJWKMap, salt)
+	payload := map[string]any{
+		"serverPublicKey": serverPubJWKMap,
+		"salt":            salt,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("failed to sign exchange: %v", err)
+		log.Printf("failed to marshal payload: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to build response"})
 		return
 	}
 
-	var response map[string]any
-	if err := json.Unmarshal(responseJSON, &response); err != nil {
-		log.Printf("failed to unmarshal signed response: %v", err)
+	signature, err := internal.SignPayload(payloadBytes)
+	if err != nil {
+		log.Printf("failed to sign payload: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to finalize response"})
 		return
 	}
 
-	response["sessionId"] = sessionID
+	response := map[string]any{
+		"payload":   base64.StdEncoding.EncodeToString(payloadBytes),
+		"signature": base64.StdEncoding.EncodeToString(signature),
+		"sessionId": sessionID,
+	}
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)

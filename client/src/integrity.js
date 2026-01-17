@@ -27,7 +27,16 @@ async function generateEphemeralSecret(privateKey, publicKey) {
     );
 }
 
-function base64ToBytes(b64) {
+function base64UrlToBase64(str) {
+    let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+        base64 += '=';
+    }
+    return base64;
+}
+
+function base64ToBytes(b64url) {
+    const b64 = base64UrlToBase64(b64url);
     const binary = atob(b64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
@@ -145,8 +154,43 @@ async function encryptWithServerCert(data) {
 }
 
 // TODO: Check if the signature corresponds to the content with AEAD
-function verifyServerSignature(signature, content) {
-    return true
+async function verifyServerSignature(signature, payloadBytes) {
+    const pemHeader = "-----BEGIN PUBLIC KEY-----";
+    const pemFooter = "-----END PUBLIC KEY-----";
+
+    const pemContents = pem
+        .replace(pemHeader, "")
+        .replace(pemFooter, "")
+        .replace(/\s/g, "");
+
+    const binaryDer = str2ab(atob(pemContents));
+
+    const publicKey = await crypto.subtle.importKey(
+        "spki",
+        binaryDer,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["verify"]
+    );
+
+    let signatureBytes;
+
+    if (typeof signature === "string") {
+        signatureBytes = base64ToBytes(signature);
+    } else if (signature instanceof Uint8Array) {
+        signatureBytes = signature;
+    } else if (signature instanceof ArrayBuffer) {
+        signatureBytes = new Uint8Array(signature);
+    } else {
+        throw new Error("Formato de assinatura inválido");
+    }
+
+    return crypto.subtle.verify(
+        "RSASSA-PKCS1-v1_5",
+        publicKey,
+        signatureBytes,
+        payloadBytes
+    );
 }
 
 function str2ab(str) {
