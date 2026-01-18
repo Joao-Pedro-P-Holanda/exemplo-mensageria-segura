@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"mensageria_segura/internal/key_exchange"
 
+	"sync"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -19,6 +21,7 @@ type Client struct {
 	onClose   func(*Client)
 	keyC2S    []byte
 	keyS2C    []byte
+	closeOnce sync.Once
 }
 
 func NewClient(
@@ -53,16 +56,7 @@ func (c *Client) ID() string {
 }
 
 func (c *Client) ReadPump() {
-	defer func() {
-		if c.onClose != nil {
-			c.onClose(c)
-		}
-		err := c.conn.Close()
-		if err != nil {
-			slog.Error("failed to close websocket connection", "error", err)
-			return
-		}
-	}()
+	defer c.closeConnection()
 
 	for {
 		select {
@@ -115,12 +109,7 @@ func (c *Client) ReadPump() {
 }
 
 func (c *Client) WritePump() {
-	defer func(conn *websocket.Conn) {
-		err := conn.Close()
-		if err != nil {
-			slog.Error("failed to close websocket connection", "error", err)
-		}
-	}(c.conn)
+	defer c.closeConnection()
 
 	for {
 		select {
@@ -152,4 +141,16 @@ func (c *Client) Close() {
 
 func (c *Client) IsAuthenticated() bool {
 	return c.keyS2C != nil && c.keyC2S != nil
+}
+
+func (c *Client) closeConnection() {
+	c.closeOnce.Do(func() {
+		if c.onClose != nil {
+			c.onClose(c)
+		}
+		err := c.conn.Close()
+		if err != nil {
+			slog.Error("failed to close websocket connection", "error", err)
+		}
+	})
 }

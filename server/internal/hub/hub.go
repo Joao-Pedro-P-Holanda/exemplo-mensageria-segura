@@ -121,7 +121,7 @@ func (h *Hub) encryptAndSendMessage(msg MessageEvent, client *Client) {
 
 	frame, err := json.Marshal(response)
 	if err != nil {
-		slog.Error("failed to marshal encrypted inBox", "error", err)
+		slog.Error("failed to marshal encrypted message", "error", err)
 		return
 	}
 
@@ -153,6 +153,9 @@ func (h *Hub) GetSession(sessionID int) (*Session, bool) {
 }
 
 func (h *Hub) CreateSession(clientID string, salt string, keyC2S []byte, keyS2C []byte) (sessionID int, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	session := &Session{
 		ClientID: clientID,
 		Salt:     salt,
@@ -166,9 +169,7 @@ func (h *Hub) CreateSession(clientID string, salt string, keyC2S []byte, keyS2C 
 
 	sessionID = int(session.ID)
 
-	h.mu.Lock()
 	h.sessions[sessionID] = session
-	h.mu.Unlock()
 
 	return sessionID, nil
 }
