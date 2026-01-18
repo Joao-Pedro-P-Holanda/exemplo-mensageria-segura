@@ -104,10 +104,6 @@ function joinChat() {
 
 	// Use setTimeout to ensure DOM is ready before processing
 	setTimeout(() => {
-		// Trigger htmx to process the WebSocket connection
-		const chatContainer = document.getElementById("chat-container")
-		htmx.process(chatContainer)
-
 		// Focus on message input
 		document.getElementById("message-input").focus()
 	}, 0)
@@ -165,10 +161,25 @@ document.addEventListener("DOMContentLoaded", () => {
 			if (!symmetricKey) {
 				throw new Error("Symmetric key unavailable")
 			}
+
+			const input = document.getElementById("message-input")
+			const content = input.value.trim()
+
+			if (!content) return
+
+			// Optimistic UI update
+			appendMessage({
+				username: username,
+				content: content,
+			})
+
+			// Clear input
+			input.value = ""
+
 			const payload = JSON.stringify({
 				username: username,
 				nonce: generateNonce(12),
-				content: document.getElementById("message-input").value,
+				content: content,
 			})
 
 			const { ciphertext, iv } = await encryptWithAesGcm(symmetricKey, payload)

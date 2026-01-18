@@ -29,8 +29,8 @@ func CreateTables(db *sql.DB) error {
 	return nil
 }
 
-// UpsertSession stores session material for a client.
-func CreateSession(db *sql.DB, clientID string, salt string, ephemeralAESKey []byte) (int, error) {
+// CreateSession stores session material for a client.
+func CreateSession(db *sql.DB, clientID *int, salt string, ephemeralAESKey []byte) (int, error) {
 	if db == nil {
 		return 0, fmt.Errorf("insert session: db is nil")
 	}
@@ -44,7 +44,7 @@ func CreateSession(db *sql.DB, clientID string, salt string, ephemeralAESKey []b
 	}
 	insertedId, err := result.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("Can't get the inserted row id %w", err)
+		return 0, fmt.Errorf("can't get the inserted row id %w", err)
 	}
 	return int(insertedId), nil
 }

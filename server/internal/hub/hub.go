@@ -4,13 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"mensageria_segura/internal/key_exchange"
 	"sync"
 )
+
+type MessageEvent struct {
+	Sender  *Client
+	Payload []byte
+}
 
 type Hub struct {
 	ctx        context.Context
 	clients    map[*Client]struct{}
-	broadcast  chan EncryptedMessage
+	broadcast  chan MessageEvent
 	register   chan *Client
 	unregister chan *Client
 	mutex      sync.RWMutex
@@ -19,7 +25,7 @@ type Hub struct {
 func NewHub(ctx context.Context) *Hub {
 	return &Hub{
 		ctx:        ctx,
-		broadcast:  make(chan EncryptedMessage),
+		broadcast:  make(chan MessageEvent),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]struct{}),
@@ -59,16 +65,38 @@ func (h *Hub) unregisterClient(client *Client) {
 	slog.Info("Client disconnected", "total_clients", len(h.clients))
 }
 
-func (h *Hub) broadcastMessage(msg EncryptedMessage) {
+func (h *Hub) broadcastMessage(msg MessageEvent) {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
 
 	for client := range h.clients {
+		// Skip the sender (Echo issue)
+		if client == msg.Sender {
+			continue
+		}
+
 		if !client.IsAuthenticated() {
 			continue
 		}
 
-		frame, err := json.Marshal(msg)
+		ciphertext, iv, err := key_exchange.EncryptWithSymmetric(client.symmetricKey, msg.Payload)
+		if err != nil {
+			slog.Error("failed to encrypt message for client", "error", err)
+			continue
+		}
+
+		// Re-construct the message structure expected by the client
+		response := EncryptedMessage{
+			SessionID: 0, // Not needed strictly for client-side display, or use client.sessionID? app.js doesn't seem to use sessionId heavily for display, just IV and Content.
+			Content:   ciphertext,
+			IV:        iv,
+		}
+		// Note: app.js uses sessionId in line 64 of handshake (data.sessionId).
+		// In htmx:wsAfterMessage (line 191), it parses event.detail.message.
+		// app.js line 195: decryptWithAesGcm(symmetricKey, incoming.content, incoming.iv)
+		// It doesn't use sessionId from the incoming message.
+
+		frame, err := json.Marshal(response)
 		if err != nil {
 			slog.Error("failed to marshal encrypted broadcast", "error", err)
 			continue
@@ -86,6 +114,9 @@ func (h *Hub) Unregister(client *Client) {
 	h.unregister <- client
 }
 
-func (h *Hub) Broadcast(msg EncryptedMessage) {
-	h.broadcast <- msg
+func (h *Hub) Broadcast(sender *Client, payload []byte) {
+	h.broadcast <- MessageEvent{
+		Sender:  sender,
+		Payload: payload,
+	}
 }

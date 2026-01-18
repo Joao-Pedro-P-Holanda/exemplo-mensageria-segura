@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"mensageria_segura/internal/database"
+	"mensageria_segura/internal/key_exchange"
 
 	"github.com/gorilla/websocket"
 )
@@ -15,11 +16,11 @@ type Client struct {
 	send         chan []byte
 	sessionID    string
 	symmetricKey []byte
-	onMessage    func(EncryptedMessage)
+	onMessage    func(*Client, []byte)
 	onClose      func(*Client)
 }
 
-func NewClient(ctx context.Context, conn *websocket.Conn, onMessage func(EncryptedMessage), onClose func(client *Client)) *Client {
+func NewClient(ctx context.Context, conn *websocket.Conn, onMessage func(*Client, []byte), onClose func(client *Client)) *Client {
 	return &Client{
 		ctx:       ctx,
 		conn:      conn,
@@ -79,8 +80,14 @@ func (c *Client) ReadPump() {
 				c.symmetricKey = symKey
 			}
 
+			plaintext, err := key_exchange.DecryptWithSymmetric(c.symmetricKey, encryptedMsg.Content, encryptedMsg.IV)
+			if err != nil {
+				slog.Error("failed to decrypt message", "error", err)
+				continue
+			}
+
 			if c.onMessage != nil {
-				c.onMessage(encryptedMsg)
+				c.onMessage(c, plaintext)
 			}
 		}
 	}
