@@ -251,3 +251,42 @@ body {
 .messages-container::-webkit-scrollbar-thumb:hover {
 	background: #5568d3;
 }
+
+.recipient-controls {
+    padding: 15px 20px;
+    background: #f3f4f6;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.recipient-controls label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #4b5563;
+}
+
+.recipient-controls input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.recipient-controls input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+/* Enhancements for Login Inputs to match overall theme */
+.login-section input {
+    background: #f9fafb;
+}
+
+.login-section input:focus {
+    background: white;
+}

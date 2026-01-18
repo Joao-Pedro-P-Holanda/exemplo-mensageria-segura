@@ -11,23 +11,41 @@ import (
 )
 
 type Client struct {
+	id           string
 	ctx          context.Context
 	conn         *websocket.Conn
 	send         chan []byte
-	sessionID    string
+	sessionID    int
 	symmetricKey []byte
-	onMessage    func(*Client, []byte)
+	onMessage    func(client *Client, recipientID string, payload []byte)
 	onClose      func(*Client)
 }
 
-func NewClient(ctx context.Context, conn *websocket.Conn, onMessage func(*Client, []byte), onClose func(client *Client)) *Client {
+func NewClient(
+	id string,
+	ctx context.Context,
+	conn *websocket.Conn,
+	sessionID int,
+	onMessage func(client *Client, recipientID string, payload []byte),
+	onClose func(client *Client),
+) *Client {
 	return &Client{
+		id:        id,
 		ctx:       ctx,
 		conn:      conn,
+		sessionID: sessionID,
 		send:      make(chan []byte, 256),
 		onMessage: onMessage,
 		onClose:   onClose,
 	}
+}
+
+func (c *Client) SessionID() int {
+	return c.sessionID
+}
+
+func (c *Client) ID() string {
+	return c.id
 }
 
 func (c *Client) ReadPump() {
@@ -49,10 +67,14 @@ func (c *Client) ReadPump() {
 		default:
 			_, message, err := c.conn.ReadMessage()
 			if err != nil {
-				// If the loop is ending due to context cancellation, don't log it as an error.
 				if c.ctx.Err() != nil {
 					return
 				}
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+					slog.Info("websocket connection closed normally")
+					return
+				}
+
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					slog.Error("websocket error", "error", err)
 				}
@@ -70,14 +92,20 @@ func (c *Client) ReadPump() {
 				continue
 			}
 
-			_, symKey, ok, _ := database.GetSession(database.DB, encryptedMsg.SessionID)
-			if !ok {
-				slog.Warn("unknown session id", "session_id", encryptedMsg.SessionID)
+			if encryptedMsg.SessionID != c.sessionID {
+				slog.Warn("dropping message for another session", "session_id", encryptedMsg.SessionID)
+				continue
+			}
+
+			// Find session using generic repository
+			session, err := database.FindByID[database.Session](c.ctx, uint(encryptedMsg.SessionID))
+			if err != nil {
+				slog.Warn("unknown session id", "session_id", encryptedMsg.SessionID, "error", err)
 				continue
 			}
 
 			if c.symmetricKey == nil {
-				c.symmetricKey = symKey
+				c.symmetricKey = session.EphemeralAESKey
 			}
 
 			plaintext, err := key_exchange.DecryptWithSymmetric(c.symmetricKey, encryptedMsg.Content, encryptedMsg.IV)
@@ -87,7 +115,7 @@ func (c *Client) ReadPump() {
 			}
 
 			if c.onMessage != nil {
-				c.onMessage(c, plaintext)
+				c.onMessage(c, encryptedMsg.RecipientID, plaintext)
 			}
 		}
 	}

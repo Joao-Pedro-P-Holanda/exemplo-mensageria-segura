@@ -50,6 +50,7 @@ async function ensureHandshake() {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
+				Authorization: "Basic " + btoa(username + ":"),
 			},
 			body: JSON.stringify({ content: await encryptWithServerCert(JSON.stringify(publicJwk)) }),
 		})
@@ -89,7 +90,7 @@ async function ensureHandshake() {
 	await handshakePromise
 }
 
-function joinChat() {
+async function joinChat() {
 	const usernameInput = document.getElementById("username-input")
 	username = usernameInput.value.trim()
 
@@ -98,9 +99,30 @@ function joinChat() {
 		return
 	}
 
+	try {
+		await ensureHandshake()
+	} catch (err) {
+		console.error(err)
+		alert("Handshake failed: " + err.message)
+		return
+	}
+
+	// Sync login recipient to main recipient input
+	const loginRecipientObj = document.getElementById("recipient-input-login")
+	const recipientInput = document.getElementById("recipient-input")
+	if (loginRecipientObj && recipientInput) {
+		recipientInput.value = loginRecipientObj.value.trim()
+	}
+
 	// Hide login section and show chat section
 	document.getElementById("login-section").style.display = "none"
 	document.getElementById("chat-section").style.display = "flex"
+
+	// Connect WebSocket
+	const chatContainer = document.getElementById("chat-container")
+	chatContainer.setAttribute("hx-ext", "ws")
+	chatContainer.setAttribute("ws-connect", `ws://localhost:8080/ws?clientId=${encodeURIComponent(username)}&sessionId=${sessionId}`)
+	htmx.process(chatContainer)
 
 	// Use setTimeout to ensure DOM is ready before processing
 	setTimeout(() => {
@@ -176,7 +198,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
 			if (!content) return
 
-			// Optimistic UI update
+			const recipient = document.getElementById("recipient-input").value.trim()
+
+			// Optimistic UI update (show if broadcast or if sent to specific user and we are viewing that user)
+			const activeRecipient = recipient
+			const currentView = document.getElementById("recipient-input").value.trim() // Same as recipient but semantically the View
+
+			// If I send a message:
+			// - Broadcast: Show it.
+			// - Private: Show it only if I'm viewing that private chat (which I am, by definition of input).
 			appendMessage({
 				username: username,
 				content: content,
@@ -195,6 +225,7 @@ document.addEventListener("DOMContentLoaded", () => {
 			event.detail.socketWrapper.sendImmediately(
 				JSON.stringify({
 					sessionId,
+					recipientId: recipient,
 					content: ciphertext,
 					iv,
 				}),
@@ -211,6 +242,29 @@ document.addEventListener("DOMContentLoaded", () => {
 			const incoming = JSON.parse(event.detail.message)
 
 			if (!incoming.content || !incoming.iv) return
+
+			// Filtering
+			const activeRecipient = document.getElementById("recipient-input").value.trim()
+
+			// incoming.recipientId is empty for broadcast, or set to MyID for private messages.
+			// incoming.senderId is the sender.
+
+			if (activeRecipient === "") {
+				// Broadcast Mode:
+				// ONLY show if it is a broadcast message (recipientId is empty).
+				if (incoming.recipientId !== "") return
+			} else {
+				// Private Mode:
+				// ONLY show if it is a private message meant for ME (recipientId !== "")
+				// AND it is from the person I am talking to (senderId === activeRecipient)
+
+				// Case 1: Message is a Broadcast. I am in Private Mode. -> HIDE
+				if (incoming.recipientId === "") return
+
+				// Case 2: Message is Private.
+				// Is it from the person I'm looking at?
+				if (incoming.senderId !== activeRecipient) return
+			}
 
 			const plaintext = await decryptWithAesGcm(symmetricKey, incoming.content, incoming.iv)
 

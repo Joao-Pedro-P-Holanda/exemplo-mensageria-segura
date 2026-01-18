@@ -1,21 +1,22 @@
 package database
 
 import (
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 )
 
 var (
-	DB   *sql.DB
+	DB   *gorm.DB
 	once sync.Once
 )
 
-func OpenInMemory() (*sql.DB, error) {
+func OpenInMemory() (*gorm.DB, error) {
 	var initErr error
 	once.Do(func() {
 		// Shared cache so multiple connections within the same process can see the same in-memory DB.
@@ -24,16 +25,28 @@ func OpenInMemory() (*sql.DB, error) {
 			databaseUrl = "file:sessions.db?cache=shared"
 		}
 		slog.Info("Database connection", "url", databaseUrl)
-		conn, err := sql.Open("sqlite", databaseUrl)
-		conn.SetMaxOpenConns(1)
+
+		conn, err := gorm.Open(sqlite.Open(databaseUrl), &gorm.Config{})
 		if err != nil {
-			initErr = fmt.Errorf("open sqlite in-memory: %w", err)
+			initErr = fmt.Errorf("open sqlite: %w", err)
 			return
 		}
 
+		sqlDB, err := conn.DB()
+		if err != nil {
+			initErr = fmt.Errorf("get sql db: %w", err)
+			return
+		}
+
+		sqlDB.SetMaxOpenConns(1)
+		// SetMaxIdleConns and SetConnMaxLifetime are good practices,
+		// but MaxOpenConns=1 is critical for sqlite generic concurrent access if not WAL.
+		sqlDB.SetMaxIdleConns(1)
+		sqlDB.SetConnMaxLifetime(time.Hour)
+
 		// Validate connectivity.
-		if err := conn.Ping(); err != nil {
-			_ = conn.Close()
+		if err := sqlDB.Ping(); err != nil {
+			_ = sqlDB.Close()
 			initErr = fmt.Errorf("ping sqlite: %w", err)
 			return
 		}
@@ -50,12 +63,12 @@ func OpenInMemory() (*sql.DB, error) {
 }
 
 // InitInMemory opens the DB and creates required tables.
-func InitInMemory() (*sql.DB, error) {
+func InitInMemory() (*gorm.DB, error) {
 	conn, err := OpenInMemory()
 	if err != nil {
 		return nil, err
 	}
-	if err := CreateTables(conn); err != nil {
+	if err := AutoMigrate(conn); err != nil {
 		return nil, err
 	}
 	return conn, nil
