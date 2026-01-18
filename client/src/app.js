@@ -203,9 +203,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
 			const recipient = document.getElementById("recipient-input").value.trim()
 
-			// Optimistic UI update (show if broadcast or if sent to specific user and we are viewing that user)
-			const activeRecipient = recipient
-			const currentView = document.getElementById("recipient-input").value.trim() // Same as recipient but semantically the View
 
 			// If I send a message:
 			// - Broadcast: Show it.
