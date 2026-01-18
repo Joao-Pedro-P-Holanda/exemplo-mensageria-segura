@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"mensageria_segura/internal/database"
 	"mensageria_segura/internal/hub"
@@ -20,7 +21,7 @@ func main() {
 	logger := slog.New(tint.NewHandler(os.Stdout, &tint.Options{
 		Level:      slog.LevelDebug,
 		TimeFormat: "2006-01-02 15:04:05",
-		NoColor:    false, // Explicitly enable colors
+		NoColor:    false,
 	}))
 	slog.SetDefault(logger)
 
@@ -43,7 +44,7 @@ func main() {
 
 	port := ":8080"
 	handler := cors.New(cors.Options{
-		AllowedOrigins: []string{"*"},
+		AllowedOrigins:   []string{"*"},
 		AllowCredentials: true,
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type"},
@@ -57,19 +58,19 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Listen for syscall signals for process to interrupt/quit
+	// Listen for syscall signals for a process to interrupt/quit
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	go func() {
 		<-sig
 
-		// Shutdown signal with grace period of 30 seconds
+		// Shutdown signal with a grace period of 30 seconds
 		shutdownCtx, cancel := context.WithTimeout(serverCtx, 30*time.Second)
 		defer cancel()
 
 		go func() {
 			<-shutdownCtx.Done()
-			if shutdownCtx.Err() == context.DeadlineExceeded {
+			if errors.Is(shutdownCtx.Err(), context.DeadlineExceeded) {
 				slog.Error("graceful shutdown timed out.. forcing exit.")
 				os.Exit(1)
 			}
@@ -87,7 +88,7 @@ func main() {
 
 	slog.Info("WebSocket server starting", "port", port)
 	err := server.ListenAndServe()
-	if err != nil && err != http.ErrServerClosed {
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
