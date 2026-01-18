@@ -16,10 +16,10 @@ type Client struct {
 	sessionID    string
 	symmetricKey []byte
 	onMessage    func(EncryptedMessage)
-	onClose      func()
+	onClose      func(*Client)
 }
 
-func NewClient(ctx context.Context, conn *websocket.Conn, onMessage func(EncryptedMessage), onClose func()) *Client {
+func NewClient(ctx context.Context, conn *websocket.Conn, onMessage func(EncryptedMessage), onClose func(client *Client)) *Client {
 	return &Client{
 		ctx:       ctx,
 		conn:      conn,
@@ -32,7 +32,7 @@ func NewClient(ctx context.Context, conn *websocket.Conn, onMessage func(Encrypt
 func (c *Client) ReadPump() {
 	defer func() {
 		if c.onClose != nil {
-			c.onClose()
+			c.onClose(c)
 		}
 		err := c.conn.Close()
 		if err != nil {

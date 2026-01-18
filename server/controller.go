@@ -42,12 +42,12 @@ func (c *Controller) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var client *hub.Client
-	client = hub.NewClient(c.ctx, conn, func(msg hub.EncryptedMessage) {
-		c.hub.Broadcast(msg)
-	}, func() {
-		c.hub.Unregister(client)
-	})
+	client := hub.NewClient(
+		c.ctx,
+		conn,
+		c.hub.Broadcast,
+		c.hub.Unregister,
+	)
 
 	c.hub.Register(client)
 
@@ -103,7 +103,7 @@ func (c *Controller) conductKeyExchange(req key_exchange.KeyExchangeRequest) (ma
 	decryptedJWKBytes, err := internal.DecryptWithPrivateCertificate(req.Content)
 	if err != nil {
 		slog.Error("could not decrypt client public jwk", "error", err)
-		return nil, fmt.Errorf("Invalid encrypted content")
+		return nil, fmt.Errorf("invalid encrypted content")
 	}
 
 	clientPub, err := key_exchange.ConvertJWKToECDHPublic(decryptedJWKBytes)
