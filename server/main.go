@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
-	"log"
+	"log/slog"
 	"mensageria_segura/internal/database"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/lmittmann/tint"
 	"github.com/rs/cors"
 )
 
@@ -48,7 +53,7 @@ func (h *Hub) run() {
 			h.mutex.Lock()
 			h.clients[client] = true
 			h.mutex.Unlock()
-			log.Printf("Client connected. Total clients: %d", len(h.clients))
+			slog.Info("Client connected", "total_clients", len(h.clients))
 
 		case client := <-h.unregister:
 			h.mutex.Lock()
@@ -57,7 +62,7 @@ func (h *Hub) run() {
 				close(client.send)
 			}
 			h.mutex.Unlock()
-			log.Printf("Client disconnected. Total clients: %d", len(h.clients))
+			slog.Info("Client disconnected", "total_clients", len(h.clients))
 
 		case encrypted := <-h.broadcast:
 			h.mutex.Lock()
@@ -69,7 +74,7 @@ func (h *Hub) run() {
 				outgoing := encrypted
 				frame, err := json.Marshal(outgoing)
 				if err != nil {
-					log.Printf("failed to marshal encrypted broadcast: %v", err)
+					slog.Error("failed to marshal encrypted broadcast", "error", err)
 					continue
 				}
 
@@ -96,25 +101,25 @@ func (c *Client) readPump() {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("error: %v", err)
+				slog.Error("websocket error", "error", err)
 			}
 			break
 		}
 		var encryptedMsg EncryptedMessage
 		if err := json.Unmarshal(message, &encryptedMsg); err != nil {
-			log.Printf("invalid websocket payload: %v", err)
+			slog.Warn("invalid websocket payload", "error", err)
 			continue
 		}
 
 		// If payload is missing, this is likely an unencrypted message (e.g. client missed handshake). Ignore but do not spam logs.
 		if encryptedMsg.Content == "" || encryptedMsg.IV == "" {
-			log.Printf("dropping unencrypted message of type; handshake likely not completed")
+			slog.Warn("dropping unencrypted message; handshake likely not completed")
 			continue
 		}
 
 		_, symKey, ok, _ := database.GetSession(database.DB, encryptedMsg.SessionID)
 		if !ok {
-			log.Printf("unknown session id: %d", encryptedMsg.SessionID)
+			slog.Warn("unknown session id", "session_id", encryptedMsg.SessionID)
 			continue
 		}
 
@@ -141,7 +146,7 @@ func (c *Client) writePump() {
 func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
+		slog.Error("upgrade failed", "error", err)
 		return
 	}
 
@@ -154,8 +159,17 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	// Initialize beautiful logging with colors and full date
+	logger := slog.New(tint.NewHandler(os.Stdout, &tint.Options{
+		Level:      slog.LevelDebug,
+		TimeFormat: "2006-01-02 15:04:05",
+		NoColor:    false, // Explicitly enable colors
+	}))
+	slog.SetDefault(logger)
+
 	if _, err := database.InitInMemory(); err != nil {
-		log.Fatalf("failed to initialize database: %v", err)
+		slog.Error("failed to initialize database", "error", err)
+		os.Exit(1)
 	}
 
 	hub := newHub()
@@ -169,8 +183,6 @@ func main() {
 	mux.HandleFunc("/key-exchange", KeyExchangeHandler)
 
 	port := ":8080"
-	fmt.Printf("WebSocket server starting on port %s\n", port)
-
 	handler := cors.New(cors.Options{
 		AllowedOrigins: []string{
 			"http://localhost:3001",
@@ -183,5 +195,52 @@ func main() {
 		AllowedHeaders:   []string{"Content-Type"},
 	}).Handler(mux)
 
-	log.Fatal(http.ListenAndServe(port, handler))
+	server := &http.Server{
+		Addr:         port,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Server run context
+	serverCtx, serverStopCtx := context.WithCancel(context.Background())
+
+	// Listen for syscall signals for process to interrupt/quit
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		<-sig
+
+		// Shutdown signal with grace period of 30 seconds
+		shutdownCtx, _ := context.WithTimeout(serverCtx, 30*time.Second)
+
+		go func() {
+			<-shutdownCtx.Done()
+			if shutdownCtx.Err() == context.DeadlineExceeded {
+				slog.Error("graceful shutdown timed out.. forcing exit.")
+				os.Exit(1)
+			}
+		}()
+
+		// Trigger graceful shutdown
+		slog.Info("Shutting down server...")
+		err := server.Shutdown(shutdownCtx)
+		if err != nil {
+			slog.Error("server shutdown failed", "error", err)
+			os.Exit(1)
+		}
+		serverStopCtx()
+	}()
+
+	slog.Info("WebSocket server starting", "port", port)
+	err := server.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Wait for server context to be stopped
+	<-serverCtx.Done()
+	slog.Info("Server stopped gracefully")
 }

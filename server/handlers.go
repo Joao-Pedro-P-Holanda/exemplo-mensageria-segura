@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"mensageria_segura/internal"
 	"mensageria_segura/internal/database"
 	"mensageria_segura/internal/key_exchange"
@@ -51,7 +51,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	decryptedJWKBytes, err := internal.DecryptWithPrivateCertificate(req.Content)
 	if err != nil {
-		log.Printf("could not decrypt client public jwk %v", err)
+		slog.Error("could not decrypt client public jwk", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid encrypted content"})
 		return
@@ -59,7 +59,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	clientPub, err := key_exchange.ConvertJWKToECDHPublic(decryptedJWKBytes)
 	if err != nil {
-		log.Printf("failed to parse client jwk as ecdh: %v", err)
+		slog.Error("failed to parse client jwk as ecdh", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid client public key"})
 		return
@@ -67,7 +67,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	serverPriv, err := key_exchange.GenerateECDHKeyPair()
 	if err != nil {
-		log.Printf("failed to generate server key pair: %v", err)
+		slog.Error("failed to generate server key pair", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to generate server keys"})
 		return
@@ -75,7 +75,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	serverPubJWKMap, err := ecdhPublicKeyToJWKMap(serverPriv.PublicKey())
 	if err != nil {
-		log.Printf("failed to encode server public key jwk: %v", err)
+		slog.Error("failed to encode server public key jwk", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to prepare public key"})
 		return
@@ -83,7 +83,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	sharedSecret, err := key_exchange.DeriveSharedSecret(serverPriv, clientPub)
 	if err != nil {
-		log.Printf("failed to derive shared secret: %v", err)
+		slog.Error("failed to derive shared secret", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid client public key"})
 		return
@@ -91,7 +91,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	salt, err := key_exchange.GenerateSalt(32)
 	if err != nil {
-		log.Printf("failed to generate salt: %v", err)
+		slog.Error("failed to generate salt", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to generate salt"})
 		return
@@ -99,7 +99,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	saltBytes, err := base64.StdEncoding.DecodeString(salt)
 	if err != nil {
-		log.Printf("failed to decode salt: %v", err)
+		slog.Error("failed to decode salt", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to handle salt"})
 		return
@@ -107,7 +107,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	symmetricKey, err := key_exchange.DeriveSymmetricKey(sharedSecret, saltBytes)
 	if err != nil {
-		log.Printf("failed to derive symmetric key: %v", err)
+		slog.Error("failed to derive symmetric key", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to derive key"})
 		return
@@ -115,7 +115,7 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	sessionID, err := database.CreateSession(database.DB, req.ClientId, salt, symmetricKey)
 	if err != nil {
-		log.Printf("failed to generate session id: %v", err)
+		slog.Error("failed to generate session id", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to create session"})
 		return
@@ -128,14 +128,14 @@ func KeyExchangeHandler(w http.ResponseWriter, r *http.Request) {
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("failed to marshal payload: %v", err)
+		slog.Error("failed to marshal payload", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	signature, err := internal.SignPayload(payloadBytes)
 	if err != nil {
-		log.Printf("failed to sign payload: %v", err)
+		slog.Error("failed to sign payload", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

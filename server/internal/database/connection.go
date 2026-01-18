@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 
@@ -22,7 +23,7 @@ func OpenInMemory() (*sql.DB, error) {
 		if !set {
 			databaseUrl = "file:sessions.db?cache=shared"
 		}
-		fmt.Println(databaseUrl)
+		slog.Info("Database connection", "url", databaseUrl)
 		conn, err := sql.Open("sqlite", databaseUrl)
 		conn.SetMaxOpenConns(1)
 		if err != nil {
