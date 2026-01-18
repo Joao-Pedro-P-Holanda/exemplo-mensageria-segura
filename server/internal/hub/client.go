@@ -4,27 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"mensageria_segura/internal/database"
 	"mensageria_segura/internal/key_exchange"
 
 	"github.com/gorilla/websocket"
 )
 
 type Client struct {
-	id           string
-	ctx          context.Context
-	conn         *websocket.Conn
-	send         chan []byte
-	sessionID    int
-	symmetricKey []byte
-	onMessage    func(client *Client, recipientID string, payload []byte)
-	onClose      func(*Client)
+	id        string
+	ctx       context.Context
+	conn      *websocket.Conn
+	send      chan []byte
+	sessionID int
+	onMessage func(client *Client, recipientID string, payload []byte)
+	onClose   func(*Client)
+	keyC2S    []byte
+	keyS2C    []byte
 }
 
 func NewClient(
 	id string,
 	ctx context.Context,
 	conn *websocket.Conn,
+	keyC2S []byte,
+	keyS2C []byte,
 	sessionID int,
 	onMessage func(client *Client, recipientID string, payload []byte),
 	onClose func(client *Client),
@@ -33,6 +35,8 @@ func NewClient(
 		id:        id,
 		ctx:       ctx,
 		conn:      conn,
+		keyC2S:    keyC2S,
+		keyS2C:    keyS2C,
 		sessionID: sessionID,
 		send:      make(chan []byte, 256),
 		onMessage: onMessage,
@@ -97,18 +101,7 @@ func (c *Client) ReadPump() {
 				continue
 			}
 
-			// Find session using generic repository
-			session, err := database.FindByID[database.Session](c.ctx, uint(encryptedMsg.SessionID))
-			if err != nil {
-				slog.Warn("unknown session id", "session_id", encryptedMsg.SessionID, "error", err)
-				continue
-			}
-
-			if c.symmetricKey == nil {
-				c.symmetricKey = session.EphemeralAESKey
-			}
-
-			plaintext, err := key_exchange.DecryptWithSymmetric(c.symmetricKey, encryptedMsg.Content, encryptedMsg.IV)
+			plaintext, err := key_exchange.DecryptWithSymmetric(c.keyC2S, encryptedMsg.Content, encryptedMsg.IV)
 			if err != nil {
 				slog.Error("failed to decrypt message", "error", err)
 				continue
@@ -158,5 +151,5 @@ func (c *Client) Close() {
 }
 
 func (c *Client) IsAuthenticated() bool {
-	return c.symmetricKey != nil
+	return c.keyS2C != nil && c.keyC2S != nil
 }

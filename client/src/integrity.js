@@ -56,16 +56,43 @@ async function importServerPublicKey(jwk) {
 	return await crypto.subtle.importKey("jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, false, [])
 }
 
-async function deriveSymmetricKey(sharedSecret, saltB64) {
+async function deriveSessionKeys(sharedSecret, saltB64) {
 	const salt = base64ToBytes(saltB64)
 	const secretBytes = new Uint8Array(sharedSecret)
 
-	const combined = new Uint8Array(salt.length + secretBytes.length)
-	combined.set(salt)
-	combined.set(secretBytes, salt.length)
+	// Import the shared secret as a key for HKDF
+	const keyMaterial = await crypto.subtle.importKey("raw", secretBytes, "HKDF", false, ["deriveBits"])
 
-	const digest = await crypto.subtle.digest("SHA-256", combined)
-	return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"])
+	// Derive C2S Key (Client to Server)
+	// info: "c2s"
+	const keyC2SBits = await crypto.subtle.deriveBits(
+		{
+			name: "HKDF",
+			hash: "SHA-256",
+			salt: salt,
+			info: new TextEncoder().encode("c2s"),
+		},
+		keyMaterial,
+		128, // 16 bytes * 8
+	)
+
+	// Derive S2C Key (Server to Client)
+	// info: "s2c"
+	const keyS2CBits = await crypto.subtle.deriveBits(
+		{
+			name: "HKDF",
+			hash: "SHA-256",
+			salt: salt,
+			info: new TextEncoder().encode("s2c"),
+		},
+		keyMaterial,
+		128, // 16 bytes * 8
+	)
+
+	const keyC2S = await crypto.subtle.importKey("raw", keyC2SBits, "AES-GCM", false, ["encrypt"])
+	const keyS2C = await crypto.subtle.importKey("raw", keyS2CBits, "AES-GCM", false, ["decrypt"])
+
+	return { keyC2S, keyS2C }
 }
 
 async function encryptWithAesGcm(key, plaintext) {
@@ -172,7 +199,7 @@ export {
 	generateKeyPair,
 	generateEphemeralSecret,
 	importServerPublicKey,
-	deriveSymmetricKey,
+	deriveSessionKeys,
 	encryptWithAesGcm,
 	decryptWithAesGcm,
 	encryptWithServerCert,

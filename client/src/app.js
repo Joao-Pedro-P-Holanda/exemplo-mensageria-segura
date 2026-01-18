@@ -2,7 +2,7 @@ import {
 	generateKeyPair,
 	generateEphemeralSecret,
 	importServerPublicKey,
-	deriveSymmetricKey,
+	deriveSessionKeys,
 	encryptWithAesGcm,
 	decryptWithAesGcm,
 	encryptWithServerCert,
@@ -12,7 +12,8 @@ import { generateNonce } from "./utils"
 import "./styles.css"
 
 let username = ""
-let symmetricKey = null
+let keyC2S = null
+let keyS2C = null
 let sessionId = ""
 let clientKeys = null
 let handshakePromise = null
@@ -37,7 +38,7 @@ function appendMessage({ username: sender, content }) {
 }
 
 async function ensureHandshake() {
-	if (symmetricKey) return
+	if (keyC2S && keyS2C) return
 	if (handshakePromise) {
 		return handshakePromise
 	}
@@ -84,7 +85,9 @@ async function ensureHandshake() {
 		const importedServerKey = await importServerPublicKey(serverPublicKey)
 		const sharedSecret = await generateEphemeralSecret(clientKeys.privateKey, importedServerKey)
 
-		symmetricKey = await deriveSymmetricKey(sharedSecret, salt)
+		const keys = await deriveSessionKeys(sharedSecret, salt)
+		keyC2S = keys.keyC2S
+		keyS2C = keys.keyS2C
 	})()
 
 	await handshakePromise
@@ -189,8 +192,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
 			htmx.trigger("#message-form", "htmx:abort")
 
-			if (!symmetricKey) {
-				throw new Error("Symmetric key unavailable")
+			if (!keyC2S) {
+				throw new Error("Client-Server key unavailable")
 			}
 
 			const input = document.getElementById("message-input")
@@ -221,7 +224,7 @@ document.addEventListener("DOMContentLoaded", () => {
 				content: content,
 			})
 
-			const { ciphertext, iv } = await encryptWithAesGcm(symmetricKey, payload)
+			const { ciphertext, iv } = await encryptWithAesGcm(keyC2S, payload)
 			event.detail.socketWrapper.sendImmediately(
 				JSON.stringify({
 					sessionId,
@@ -237,7 +240,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 	document.body.addEventListener("htmx:wsAfterMessage", async (event) => {
 		try {
-			if (!symmetricKey) return
+			if (!keyS2C) return
 
 			const incoming = JSON.parse(event.detail.message)
 
@@ -266,7 +269,7 @@ document.addEventListener("DOMContentLoaded", () => {
 				if (incoming.senderId !== activeRecipient) return
 			}
 
-			const plaintext = await decryptWithAesGcm(symmetricKey, incoming.content, incoming.iv)
+			const plaintext = await decryptWithAesGcm(keyS2C, incoming.content, incoming.iv)
 
 			const parsed = JSON.parse(plaintext)
 			appendMessage(parsed)

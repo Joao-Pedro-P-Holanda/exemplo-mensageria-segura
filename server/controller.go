@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"mensageria_segura/internal"
-	"mensageria_segura/internal/database"
 	"mensageria_segura/internal/hub"
 	"mensageria_segura/internal/key_exchange"
 	"net/http"
@@ -56,6 +55,12 @@ func (c *Controller) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	session, exists := c.hub.GetSession(parsedSessionID)
+	if !exists {
+		c.writeError(w, http.StatusBadRequest, "invalid session id", nil)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("upgrade failed", "error", err)
@@ -66,6 +71,8 @@ func (c *Controller) HandleWS(w http.ResponseWriter, r *http.Request) {
 		clientID,
 		c.ctx,
 		conn,
+		session.KeyC2S,
+		session.KeyS2C,
 		parsedSessionID,
 		c.hub.DeliverMessage,
 		c.hub.Unregister,
@@ -172,25 +179,17 @@ func (c *Controller) conductKeyExchange(req key_exchange.KeyExchangeRequest) (ma
 		return nil, fmt.Errorf("failed to handle salt")
 	}
 
-	symmetricKey, err := key_exchange.DeriveSymmetricKey(sharedSecret, saltBytes)
+	keyC2S, keyS2C, err := key_exchange.HKDFDeriveKeys(sharedSecret, saltBytes)
 	if err != nil {
-		slog.Error("failed to derive symmetric key", "error", err)
-		return nil, fmt.Errorf("failed to derive key")
+		slog.Error("failed to derive keys", "error", err)
+		return nil, fmt.Errorf("failed to derive keys")
 	}
 
-	// Create session using repository
-	session := database.Session{
-		ClientID:        req.ClientId,
-		Salt:            salt,
-		EphemeralAESKey: symmetricKey,
-	}
-
-	if err := database.Create(c.ctx, &session); err != nil {
-		slog.Error("failed to create session", "error", err)
+	sessionID, err := c.hub.CreateSession(req.ClientId, salt, keyC2S, keyS2C)
+	if err != nil {
+		slog.Error("failed to create session in hub", "error", err)
 		return nil, fmt.Errorf("failed to create session")
 	}
-
-	sessionID := int(session.ID)
 
 	payload := map[string]any{
 		"serverPublicKey": serverPubJWKMap,
