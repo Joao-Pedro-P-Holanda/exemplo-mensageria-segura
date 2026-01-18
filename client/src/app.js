@@ -116,8 +116,16 @@ document.addEventListener("DOMContentLoaded", () => {
 	const statusText = document.getElementById("status-text")
 	const chatContainer = document.getElementById("chat-container")
 
+	const disconnectBtn = document.getElementById("disconnect-btn")
+
 	// Join button click
 	joinBtn.addEventListener("click", joinChat)
+
+	// Disconnect button click
+	disconnectBtn.addEventListener("click", () => {
+		// Reset state
+		window.location.reload()
+	})
 
 	// Enter key in username input
 	usernameInput.addEventListener("keypress", (e) => {
@@ -133,6 +141,7 @@ document.addEventListener("DOMContentLoaded", () => {
 		statusDot.classList.remove("disconnected")
 		statusDot.classList.add("connected")
 		statusText.textContent = "Connected"
+		disconnectBtn.style.display = "block"
 	})
 
 	// WebSocket closed

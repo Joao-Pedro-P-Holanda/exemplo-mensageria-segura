@@ -1,42 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
-	<head>
-		<meta charset="UTF-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>Secure Chat</title>
-		<link rel="stylesheet" href="styles.css">
-		<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js" integrity="sha384-/TgkGk7p307TH7EXJDuUlgG3Ce1UVolAOFopFekQkkXihi5u/6OCvVKyz1W+idaz" crossorigin="anonymous"></script>
-		<script src="https://cdn.jsdelivr.net/npm/htmx-ext-ws@2.0.4" integrity="sha384-1RwI/nvUSrMRuNj7hX1+27J8XDdCoSLf0EjEyF69nacuWyiJYoQ/j39RT1mSnd2G" crossorigin="anonymous"></script>
-	</head>
-	<body>
-		<div class="container">
-			<div class="chat-header">
-				<h1>🔒 Secure Chat</h1>
-				<div class="connection-status">
-					<span class="status-dot disconnected" id="status-dot"></span>
-					<span id="status-text">Disconnected</span>
-				</div>
-			</div>
 
-			<div class="login-section" id="login-section">
-				<h2>Join Chat</h2>
-				<input type="text" id="username-input" placeholder="Enter your username" maxlength="20" autocomplete="off">
-				<button id="join-btn">Join Chat</button>
-			</div>
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Secure Chat</title>
+	<link rel="stylesheet" href="styles.css">
+	<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"
+		integrity="sha384-/TgkGk7p307TH7EXJDuUlgG3Ce1UVolAOFopFekQkkXihi5u/6OCvVKyz1W+idaz"
+		crossorigin="anonymous"></script>
+	<script src="https://cdn.jsdelivr.net/npm/htmx-ext-ws@2.0.4"
+		integrity="sha384-1RwI/nvUSrMRuNj7hX1+27J8XDdCoSLf0EjEyF69nacuWyiJYoQ/j39RT1mSnd2G"
+		crossorigin="anonymous"></script>
+</head>
 
-			<div class="chat-section" id="chat-section" style="display: none;">
-				<div id="chat-container" hx-ext="ws" ws-connect="ws://localhost:8080/ws">
-					<div class="messages-container" id="messages">
-						<!-- Messages will appear here dynamically -->
-					</div>
-					<form id='message-form' class="input-section" ws-send>
-						<input type="text" name="content" id="message-input" placeholder="Type your message..." maxlength="500" autocomplete="off">
-						<button id="send-btn" type="submit">Send</button>
-					</form>
-				</div>
+<body>
+	<div class="container">
+		<div class="chat-header">
+			<h1>🔒 Secure Chat</h1>
+			<div class="connection-status">
+				<span class="status-dot disconnected" id="status-dot"></span>
+				<span id="status-text">Disconnected</span>
+				<button id="disconnect-btn" class="disconnect-btn" style="display: none;">Disconnect</button>
 			</div>
 		</div>
 
-		<script src="app.js" type="module"></script>
-	</body>
+		<div class="login-section" id="login-section">
+			<h2>Join Chat</h2>
+			<input type="text" id="username-input" placeholder="Enter your username" maxlength="20" autocomplete="off">
+			<button id="join-btn">Join Chat</button>
+		</div>
+
+		<div class="chat-section" id="chat-section" style="display: none;">
+			<div id="chat-container" hx-ext="ws" ws-connect="ws://localhost:8080/ws">
+				<div class="messages-container" id="messages">
+					<!-- Messages will appear here dynamically -->
+				</div>
+				<form id='message-form' class="input-section" ws-send>
+					<input type="text" name="content" id="message-input" placeholder="Type your message..."
+						maxlength="500" autocomplete="off">
+					<button id="send-btn" type="submit">Send</button>
+				</form>
+			</div>
+		</div>
+	</div>
+
+	<script src="app.js" type="module"></script>
+</body>
+
 </html>
