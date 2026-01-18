@@ -112,9 +112,9 @@ func (c *Client) WritePump() {
 
 func (c *Client) Send(msg []byte) {
 	select {
+	case <-c.ctx.Done():
+		return
 	case c.send <- msg:
-	default:
-		c.Close()
 	}
 }
 
