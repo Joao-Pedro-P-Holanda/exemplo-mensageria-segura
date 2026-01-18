@@ -2,161 +2,18 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"mensageria_segura/internal/database"
+	"mensageria_segura/internal/hub"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/lmittmann/tint"
 	"github.com/rs/cors"
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// WARNING: This allows all origins for development/testing purposes.
-		// In production, restrict this to specific allowed origins for security.
-		return true
-	},
-}
-
-func (s *SessionStore) Set(id int, key []byte) {
-	s.mutex.Lock()
-	s.keys[id] = key
-	s.mutex.Unlock()
-}
-
-func (s *SessionStore) Get(id int) ([]byte, bool) {
-	s.mutex.RLock()
-	key, ok := s.keys[id]
-	s.mutex.RUnlock()
-	return key, ok
-}
-
-func newHub() *Hub {
-	return &Hub{
-		broadcast:  make(chan EncryptedMessage),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		clients:    make(map[*Client]bool),
-	}
-}
-
-func (h *Hub) run() {
-	for {
-		select {
-		case client := <-h.register:
-			h.mutex.Lock()
-			h.clients[client] = true
-			h.mutex.Unlock()
-			slog.Info("Client connected", "total_clients", len(h.clients))
-
-		case client := <-h.unregister:
-			h.mutex.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-			}
-			h.mutex.Unlock()
-			slog.Info("Client disconnected", "total_clients", len(h.clients))
-
-		case encrypted := <-h.broadcast:
-			h.mutex.Lock()
-			for client := range h.clients {
-				if client.symmetricKey == nil {
-					continue
-				}
-
-				outgoing := encrypted
-				frame, err := json.Marshal(outgoing)
-				if err != nil {
-					slog.Error("failed to marshal encrypted broadcast", "error", err)
-					continue
-				}
-
-				select {
-				// TODO: send as JSON instead of string to be parsed on client
-				case client.send <- frame:
-				default:
-					close(client.send)
-					delete(h.clients, client)
-				}
-			}
-			h.mutex.Unlock()
-		}
-	}
-}
-
-func (c *Client) readPump() {
-	defer func() {
-		c.hub.unregister <- c
-		c.conn.Close()
-	}()
-
-	for {
-		_, message, err := c.conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				slog.Error("websocket error", "error", err)
-			}
-			break
-		}
-		var encryptedMsg EncryptedMessage
-		if err := json.Unmarshal(message, &encryptedMsg); err != nil {
-			slog.Warn("invalid websocket payload", "error", err)
-			continue
-		}
-
-		// If payload is missing, this is likely an unencrypted message (e.g. client missed handshake). Ignore but do not spam logs.
-		if encryptedMsg.Content == "" || encryptedMsg.IV == "" {
-			slog.Warn("dropping unencrypted message; handshake likely not completed")
-			continue
-		}
-
-		_, symKey, ok, _ := database.GetSession(database.DB, encryptedMsg.SessionID)
-		if !ok {
-			slog.Warn("unknown session id", "session_id", encryptedMsg.SessionID)
-			continue
-		}
-
-		if c.sessionID == "" {
-			c.symmetricKey = symKey
-		}
-
-		// TODO: send message only to the chat members
-		c.hub.broadcast <- encryptedMsg
-	}
-}
-
-func (c *Client) writePump() {
-	defer c.conn.Close()
-
-	for message := range c.send {
-		err := c.conn.WriteMessage(websocket.TextMessage, message)
-		if err != nil {
-			return
-		}
-	}
-}
-
-func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		slog.Error("upgrade failed", "error", err)
-		return
-	}
-
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256)}
-	client.hub.register <- client
-
-	// Start goroutines for reading and writing
-	go client.writePump()
-	go client.readPump()
-}
 
 func main() {
 	// Initialize beautiful logging with colors and full date
@@ -172,24 +29,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	hub := newHub()
-	go hub.run()
+	// Server run context
+	serverCtx, serverStopCtx := context.WithCancel(context.Background())
+
+	h := hub.NewHub(serverCtx)
+	go h.Run()
+
+	c := NewController(serverCtx, h)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWs(hub, w, r)
-	})
-
-	mux.HandleFunc("/key-exchange", KeyExchangeHandler)
+	mux.HandleFunc("/ws", c.HandleWS)
+	mux.HandleFunc("/key-exchange", c.HandleKeyExchange)
 
 	port := ":8080"
 	handler := cors.New(cors.Options{
-		AllowedOrigins: []string{
-			"http://localhost:3001",
-			"http://localhost:3002",
-			"http://localhost:3003",
-			"http://localhost:9000",
-		},
+		AllowedOrigins: []string{"*"},
 		AllowCredentials: true,
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type"},
@@ -202,9 +56,6 @@ func main() {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-
-	// Server run context
-	serverCtx, serverStopCtx := context.WithCancel(context.Background())
 
 	// Listen for syscall signals for process to interrupt/quit
 	sig := make(chan os.Signal, 1)
