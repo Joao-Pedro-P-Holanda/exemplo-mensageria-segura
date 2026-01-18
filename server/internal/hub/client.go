@@ -34,7 +34,11 @@ func (c *Client) ReadPump() {
 		if c.onClose != nil {
 			c.onClose()
 		}
-		c.conn.Close()
+		err := c.conn.Close()
+		if err != nil {
+			slog.Error("failed to close websocket connection", "error", err)
+			return
+		}
 	}()
 
 	for {
@@ -83,7 +87,12 @@ func (c *Client) ReadPump() {
 }
 
 func (c *Client) WritePump() {
-	defer c.conn.Close()
+	defer func(conn *websocket.Conn) {
+		err := conn.Close()
+		if err != nil {
+			slog.Error("failed to close websocket connection", "error", err)
+		}
+	}(c.conn)
 
 	for {
 		select {

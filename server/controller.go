@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"mensageria_segura/internal"
 	"mensageria_segura/internal/database"
@@ -76,7 +77,12 @@ func (c *Controller) HandleKeyExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer r.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			slog.Error("failed to close request body", "error", err)
+		}
+	}(r.Body)
 	var req key_exchange.KeyExchangeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		c.writeError(w, http.StatusBadRequest, "Invalid JSON", err)
@@ -103,49 +109,49 @@ func (c *Controller) conductKeyExchange(req key_exchange.KeyExchangeRequest) (ma
 	clientPub, err := key_exchange.ConvertJWKToECDHPublic(decryptedJWKBytes)
 	if err != nil {
 		slog.Error("failed to parse client jwk as ecdh", "error", err)
-		return nil, fmt.Errorf("Invalid client public key")
+		return nil, fmt.Errorf("invalid client public key")
 	}
 
-	serverPriv, err := key_exchange.GenerateECDHKeyPair()
+	serverPrivy, err := key_exchange.GenerateECDHKeyPair()
 	if err != nil {
 		slog.Error("failed to generate server key pair", "error", err)
-		return nil, fmt.Errorf("Failed to generate server keys")
+		return nil, fmt.Errorf("failed to generate server keys")
 	}
 
-	serverPubJWKMap, err := ecdhPublicKeyToJWKMap(serverPriv.PublicKey())
+	serverPubJWKMap, err := ecdhPublicKeyToJWKMap(serverPrivy.PublicKey())
 	if err != nil {
 		slog.Error("failed to encode server public key jwk", "error", err)
-		return nil, fmt.Errorf("Failed to prepare public key")
+		return nil, fmt.Errorf("failed to prepare public key")
 	}
 
-	sharedSecret, err := key_exchange.DeriveSharedSecret(serverPriv, clientPub)
+	sharedSecret, err := key_exchange.DeriveSharedSecret(serverPrivy, clientPub)
 	if err != nil {
 		slog.Error("failed to derive shared secret", "error", err)
-		return nil, fmt.Errorf("Invalid client public key")
+		return nil, fmt.Errorf("invalid client public key")
 	}
 
 	salt, err := key_exchange.GenerateSalt(32)
 	if err != nil {
 		slog.Error("failed to generate salt", "error", err)
-		return nil, fmt.Errorf("Failed to generate salt")
+		return nil, fmt.Errorf("failed to generate salt")
 	}
 
 	saltBytes, err := base64.StdEncoding.DecodeString(salt)
 	if err != nil {
 		slog.Error("failed to decode salt", "error", err)
-		return nil, fmt.Errorf("Failed to handle salt")
+		return nil, fmt.Errorf("failed to handle salt")
 	}
 
 	symmetricKey, err := key_exchange.DeriveSymmetricKey(sharedSecret, saltBytes)
 	if err != nil {
 		slog.Error("failed to derive symmetric key", "error", err)
-		return nil, fmt.Errorf("Failed to derive key")
+		return nil, fmt.Errorf("failed to derive key")
 	}
 
 	sessionID, err := database.CreateSession(database.DB, req.ClientId, salt, symmetricKey)
 	if err != nil {
 		slog.Error("failed to generate session id", "error", err)
-		return nil, fmt.Errorf("Failed to create session")
+		return nil, fmt.Errorf("failed to create session")
 	}
 
 	payload := map[string]any{
@@ -156,13 +162,13 @@ func (c *Controller) conductKeyExchange(req key_exchange.KeyExchangeRequest) (ma
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("failed to marshal payload", "error", err)
-		return nil, fmt.Errorf("Failed to prepare payload")
+		return nil, fmt.Errorf("failed to prepare payload")
 	}
 
 	signature, err := internal.SignPayload(payloadBytes)
 	if err != nil {
 		slog.Error("failed to sign payload", "error", err)
-		return nil, fmt.Errorf("Failed to sign response")
+		return nil, fmt.Errorf("failed to sign response")
 	}
 
 	return map[string]any{

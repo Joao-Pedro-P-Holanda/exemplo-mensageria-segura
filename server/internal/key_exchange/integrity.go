@@ -81,11 +81,11 @@ func ConvertJWKToECDHPrivate(jwkBytes []byte) (*ecdh.PrivateKey, error) {
 		padded := make([]byte, 32)
 		copy(padded[32-len(dBytes):], dBytes)
 
-		priv, err := ecdh.P256().NewPrivateKey(padded)
+		privateKey, err := ecdh.P256().NewPrivateKey(padded)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build ecdh private key: %w", err)
 		}
-		return priv, nil
+		return privateKey, nil
 	default:
 		return nil, fmt.Errorf("unsupported key type: %T", jwk.Key)
 	}

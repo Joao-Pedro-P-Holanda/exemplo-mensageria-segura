@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -58,7 +59,7 @@ func GetSession(db *sql.DB, sessionId int) (salt string, ephemeralAESKey []byte,
 	row := db.QueryRow(q, sessionId)
 	var key []byte
 	if scanErr := row.Scan(&salt, &key); scanErr != nil {
-		if scanErr == sql.ErrNoRows {
+		if errors.Is(scanErr, sql.ErrNoRows) {
 			return "", nil, false, nil
 		}
 		return "", nil, false, fmt.Errorf("get session: %w", scanErr)
