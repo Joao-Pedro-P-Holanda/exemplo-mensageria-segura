@@ -61,7 +61,7 @@ func (c *Client) ReadPump() {
 				if c.ctx.Err() != nil {
 					return
 				}
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
 					slog.Info("websocket connection closed normally")
 					return
 				}
