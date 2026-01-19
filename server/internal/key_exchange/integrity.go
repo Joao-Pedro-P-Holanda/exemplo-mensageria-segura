@@ -119,7 +119,12 @@ func DeriveSymmetricKey(sharedSecret []byte, salt []byte) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-func EncryptWithSymmetric(key []byte, plaintext []byte) (string, string, error) {
+func EncryptWithSymmetricAAD(
+	key []byte,
+	plaintext []byte,
+	aad []byte,
+) (string, string, error) {
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create cipher: %w", err)
@@ -135,11 +140,20 @@ func EncryptWithSymmetric(key []byte, plaintext []byte) (string, string, error) 
 		return "", "", fmt.Errorf("failed to create iv: %w", err)
 	}
 
-	ciphertext := gcm.Seal(nil, iv, plaintext, nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), base64.StdEncoding.EncodeToString(iv), nil
+	ciphertext := gcm.Seal(nil, iv, plaintext, aad)
+
+	return base64.StdEncoding.EncodeToString(ciphertext),
+		base64.StdEncoding.EncodeToString(iv),
+		nil
 }
 
-func DecryptWithSymmetric(key []byte, ciphertextB64 string, ivB64 string) ([]byte, error) {
+func DecryptWithSymmetricAAD(
+	key []byte,
+	ciphertextB64 string,
+	ivB64 string,
+	aad []byte,
+) ([]byte, error) {
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
@@ -154,14 +168,15 @@ func DecryptWithSymmetric(key []byte, ciphertextB64 string, ivB64 string) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode ciphertext: %w", err)
 	}
+
 	iv, err := base64.StdEncoding.DecodeString(ivB64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode iv: %w", err)
 	}
 
-	plaintext, err := gcm.Open(nil, iv, ciphertext, nil)
+	plaintext, err := gcm.Open(nil, iv, ciphertext, aad)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt using symmetric key: %w", err)
+		return nil, fmt.Errorf("failed to decrypt using symmetric key with AAD: %w", err)
 	}
 
 	return plaintext, nil

@@ -9,8 +9,6 @@ import (
 	"sync"
 )
 
-type Session = database.Session
-
 type MessageEvent struct {
 	SenderID    string
 	RecipientID string
@@ -66,7 +64,7 @@ func (h *Hub) unregisterClient(client *Client) {
 	defer h.mu.Unlock()
 	if _, ok := h.clients[client.ID()]; ok {
 		delete(h.clients, client.ID())
-		client.Close()
+		defer client.Close()
 	}
 	slog.Info("Client disconnected", "total_clients", len(h.clients))
 }
@@ -100,7 +98,24 @@ func (h *Hub) encryptAndSendMessage(msg MessageEvent, client *Client) {
 		return
 	}
 
-	ciphertext, iv, err := key_exchange.EncryptWithSymmetric(client.keyS2C, msg.Payload)
+	session, ok := h.GetSession(client.SessionID())
+	if !ok {
+		return
+	}
+
+	seq := session.NextSeq()
+
+	aad := BuildAAD(
+		msg.SenderID,
+		msg.RecipientID,
+		seq,
+	)
+
+	ciphertext, iv, err := key_exchange.EncryptWithSymmetricAAD(
+		client.session.KeyS2C(),
+		msg.Payload,
+		aad,
+	)
 	if err != nil {
 		slog.Error("failed to encrypt message for client", "error", err)
 		return
@@ -111,6 +126,7 @@ func (h *Hub) encryptAndSendMessage(msg MessageEvent, client *Client) {
 		SessionID:   client.SessionID(),
 		RecipientID: msg.RecipientID,
 		SenderID:    msg.SenderID,
+		SeqNo:       seq,
 		Content:     ciphertext,
 		IV:          iv,
 	}
@@ -137,6 +153,7 @@ func (h *Hub) Unregister(client *Client) {
 }
 
 func (h *Hub) DeliverMessage(sender *Client, recipientID string, payload []byte) {
+
 	h.inBox <- MessageEvent{
 		SenderID:    sender.ID(),
 		RecipientID: recipientID,
@@ -146,30 +163,45 @@ func (h *Hub) DeliverMessage(sender *Client, recipientID string, payload []byte)
 
 func (h *Hub) GetSession(sessionID int) (*Session, bool) {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-
 	session, exists := h.sessions[sessionID]
-	return session, exists
+	h.mu.RUnlock()
+
+	if exists {
+		return session, true
+	}
+
+	dto, err := database.FindByID[database.Session](h.ctx, uint(sessionID))
+	if err != nil {
+		return nil, false
+	}
+
+	session = NewSession(dto)
+
+	h.mu.Lock()
+	h.sessions[sessionID] = session
+	h.mu.Unlock()
+
+	return session, true
 }
 
 func (h *Hub) CreateSession(clientID string, salt string, keyC2S []byte, keyS2C []byte) (sessionID int, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	session := &Session{
+	sessionDTO := &database.Session{
 		ClientID: clientID,
 		Salt:     salt,
 		KeyC2S:   keyC2S,
 		KeyS2C:   keyS2C,
 	}
-	err = database.Create(h.ctx, session)
+	err = database.Create(h.ctx, sessionDTO)
 	if err != nil {
 		return 0, err
 	}
 
-	sessionID = int(session.ID)
+	session := NewSession(sessionDTO)
 
-	h.sessions[sessionID] = session
+	h.sessions[session.ID()] = session
 
-	return sessionID, nil
+	return session.ID(), nil
 }

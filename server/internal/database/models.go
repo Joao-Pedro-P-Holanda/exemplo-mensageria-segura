@@ -17,8 +17,3 @@ type Session struct {
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
-
-// AutoMigrate migrates the schema.
-func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(&Session{})
-}

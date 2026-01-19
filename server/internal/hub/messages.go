@@ -5,6 +5,7 @@ type EncryptedMessage struct {
 	SenderID    string `json:"senderId"`
 	RecipientID string `json:"recipientId"`
 	Content     string `json:"content"`
+	SeqNo       uint64 `json:"seqNo"`
 	IV          string `json:"iv"`
 }
 

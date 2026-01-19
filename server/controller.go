@@ -57,10 +57,13 @@ func (c *Controller) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 	session, exists := c.hub.GetSession(parsedSessionID)
 	if !exists {
-		if session.ClientID != clientID {
-			c.writeError(w, http.StatusBadRequest, "client id does not match session", nil)
-			return
-		}
+		c.writeError(w, http.StatusBadRequest, "invalid session id", nil)
+		return
+	}
+
+	if session.ClientID() != clientID {
+		c.writeError(w, http.StatusBadRequest, "client id does not match session", nil)
+		return
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -73,9 +76,7 @@ func (c *Controller) HandleWS(w http.ResponseWriter, r *http.Request) {
 		clientID,
 		c.ctx,
 		conn,
-		session.KeyC2S,
-		session.KeyS2C,
-		parsedSessionID,
+		session,
 		c.hub.DeliverMessage,
 		c.hub.Unregister,
 	)

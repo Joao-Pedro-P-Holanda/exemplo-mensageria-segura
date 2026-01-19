@@ -6,6 +6,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// AutoMigrate migrates the schema.
+func AutoMigrate(db *gorm.DB) error {
+	return db.AutoMigrate(&Session{})
+}
+
 // Create ensures the type T is saved to the database.
 func Create[T any](ctx context.Context, entity *T) error {
 	return gorm.G[T](DB).Create(ctx, entity)

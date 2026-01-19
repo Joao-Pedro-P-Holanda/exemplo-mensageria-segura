@@ -95,11 +95,16 @@ async function deriveSessionKeys(sharedSecret, saltB64) {
 	return { keyC2S, keyS2C }
 }
 
-async function encryptWithAesGcm(key, plaintext) {
+async function encryptWithAesGcm(key, plaintext, aad) {
 	const iv = crypto.getRandomValues(new Uint8Array(12))
 	const encoded = new TextEncoder().encode(plaintext)
 
-	const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded)
+	const algorithm = { name: "AES-GCM", iv }
+	if (aad) {
+		algorithm.additionalData = aad
+	}
+
+	const ciphertext = await crypto.subtle.encrypt(algorithm, key, encoded)
 
 	return {
 		ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
@@ -107,11 +112,16 @@ async function encryptWithAesGcm(key, plaintext) {
 	}
 }
 
-async function decryptWithAesGcm(key, ciphertextB64, ivB64) {
+async function decryptWithAesGcm(key, ciphertextB64, ivB64, aad) {
 	const ciphertext = base64ToBytes(ciphertextB64)
 	const iv = base64ToBytes(ivB64)
 
-	const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext)
+	const algorithm = { name: "AES-GCM", iv }
+	if (aad) {
+		algorithm.additionalData = aad
+	}
+
+	const plaintext = await crypto.subtle.decrypt(algorithm, key, ciphertext)
 
 	return new TextDecoder().decode(plaintext)
 }
@@ -153,7 +163,7 @@ async function encryptWithServerCert(data) {
 		dataBuffer,
 	)
 
-	return window.btoa(ab2str(encrypted))
+	return bytesToBase64(new Uint8Array(encrypted))
 }
 
 // TODO: Check if the signature corresponds to the content with AEAD
@@ -191,8 +201,30 @@ function str2ab(str) {
 	return buf
 }
 
-function ab2str(buf) {
-	return String.fromCharCode.apply(null, new Uint8Array(buf))
+/**
+ * Builds Additional Authenticated Data (AAD) for AES-GCM
+ * @param {string} sender
+ * @param {string} recipient
+ * @param {number} seq
+ * @returns {Uint8Array}
+ */
+function buildAad(sender, recipient, seq) {
+	const encoder = new TextEncoder()
+	const senderBytes = encoder.encode(sender)
+	const recipientBytes = encoder.encode(recipient)
+	const seqBytes = new ArrayBuffer(8)
+	const view = new DataView(seqBytes)
+	// BigEndian as in the server (binary.BigEndian)
+	view.setBigUint64(0, BigInt(seq), false)
+
+	const totalLen = senderBytes.length + recipientBytes.length + 8
+	const aad = new Uint8Array(totalLen)
+
+	aad.set(senderBytes, 0)
+	aad.set(recipientBytes, senderBytes.length)
+	aad.set(new Uint8Array(seqBytes), senderBytes.length + recipientBytes.length)
+
+	return aad
 }
 
 export {
@@ -204,4 +236,5 @@ export {
 	decryptWithAesGcm,
 	encryptWithServerCert,
 	verifyServerSignature,
+	buildAad,
 }

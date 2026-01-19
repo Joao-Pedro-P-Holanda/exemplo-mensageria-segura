@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"mensageria_segura/internal/key_exchange"
-
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -16,11 +15,9 @@ type Client struct {
 	ctx       context.Context
 	conn      *websocket.Conn
 	send      chan []byte
-	sessionID int
+	session   *Session
 	onMessage func(client *Client, recipientID string, payload []byte)
 	onClose   func(*Client)
-	keyC2S    []byte
-	keyS2C    []byte
 	closeOnce sync.Once
 }
 
@@ -28,9 +25,7 @@ func NewClient(
 	id string,
 	ctx context.Context,
 	conn *websocket.Conn,
-	keyC2S []byte,
-	keyS2C []byte,
-	sessionID int,
+	session *Session,
 	onMessage func(client *Client, recipientID string, payload []byte),
 	onClose func(client *Client),
 ) *Client {
@@ -38,9 +33,7 @@ func NewClient(
 		id:        id,
 		ctx:       ctx,
 		conn:      conn,
-		keyC2S:    keyC2S,
-		keyS2C:    keyS2C,
-		sessionID: sessionID,
+		session:   session,
 		send:      make(chan []byte, 256),
 		onMessage: onMessage,
 		onClose:   onClose,
@@ -48,7 +41,7 @@ func NewClient(
 }
 
 func (c *Client) SessionID() int {
-	return c.sessionID
+	return c.session.ID()
 }
 
 func (c *Client) ID() string {
@@ -90,12 +83,31 @@ func (c *Client) ReadPump() {
 				continue
 			}
 
-			if encryptedMsg.SessionID != c.sessionID {
-				slog.Warn("dropping message for another session", "session_id", encryptedMsg.SessionID)
+			if encryptedMsg.SessionID != c.session.ID() {
+				slog.Warn("dropping message for another session",
+					"session_id", encryptedMsg.SessionID,
+					"expected_session_id", c.session.ID(),
+					"client_id", c.ID(),
+				)
 				continue
 			}
 
-			plaintext, err := key_exchange.DecryptWithSymmetric(c.keyC2S, encryptedMsg.Content, encryptedMsg.IV)
+			seq := encryptedMsg.SeqNo
+			if !c.session.AdvanceRecvSeq(seq) {
+				slog.Warn("replay or out-of-order",
+					"current", c.session.RecvSeq(),
+					"incoming", seq,
+				)
+				continue
+			}
+
+			aad := BuildAAD(
+				encryptedMsg.SenderID,
+				encryptedMsg.RecipientID,
+				seq,
+			)
+
+			plaintext, err := key_exchange.DecryptWithSymmetricAAD(c.session.KeyC2S(), encryptedMsg.Content, encryptedMsg.IV, aad)
 			if err != nil {
 				slog.Error("failed to decrypt message", "error", err)
 				continue
@@ -140,7 +152,11 @@ func (c *Client) Close() {
 }
 
 func (c *Client) IsAuthenticated() bool {
-	return c.keyS2C != nil && c.keyC2S != nil
+	if c.session == nil {
+		return false
+	}
+	c2s, s2c := c.session.KeyPair()
+	return c2s != nil && s2c != nil
 }
 
 func (c *Client) closeConnection() {
