@@ -56,23 +56,55 @@ async function importServerPublicKey(jwk) {
 	return await crypto.subtle.importKey("jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, false, [])
 }
 
-async function deriveSymmetricKey(sharedSecret, saltB64) {
+async function deriveSessionKeys(sharedSecret, saltB64) {
 	const salt = base64ToBytes(saltB64)
 	const secretBytes = new Uint8Array(sharedSecret)
 
-	const combined = new Uint8Array(salt.length + secretBytes.length)
-	combined.set(salt)
-	combined.set(secretBytes, salt.length)
+	// Import the shared secret as a key for HKDF
+	const keyMaterial = await crypto.subtle.importKey("raw", secretBytes, "HKDF", false, ["deriveBits"])
 
-	const digest = await crypto.subtle.digest("SHA-256", combined)
-	return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"])
+	// Derive C2S Key (Client to Server)
+	// info: "c2s"
+	const keyC2SBits = await crypto.subtle.deriveBits(
+		{
+			name: "HKDF",
+			hash: "SHA-256",
+			salt: salt,
+			info: new TextEncoder().encode("c2s"),
+		},
+		keyMaterial,
+		128, // 16 bytes * 8
+	)
+
+	// Derive S2C Key (Server to Client)
+	// info: "s2c"
+	const keyS2CBits = await crypto.subtle.deriveBits(
+		{
+			name: "HKDF",
+			hash: "SHA-256",
+			salt: salt,
+			info: new TextEncoder().encode("s2c"),
+		},
+		keyMaterial,
+		128, // 16 bytes * 8
+	)
+
+	const keyC2S = await crypto.subtle.importKey("raw", keyC2SBits, "AES-GCM", false, ["encrypt"])
+	const keyS2C = await crypto.subtle.importKey("raw", keyS2CBits, "AES-GCM", false, ["decrypt"])
+
+	return { keyC2S, keyS2C }
 }
 
-async function encryptWithAesGcm(key, plaintext) {
+async function encryptWithAesGcm(key, plaintext, aad) {
 	const iv = crypto.getRandomValues(new Uint8Array(12))
 	const encoded = new TextEncoder().encode(plaintext)
 
-	const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded)
+	const algorithm = { name: "AES-GCM", iv }
+	if (aad) {
+		algorithm.additionalData = aad
+	}
+
+	const ciphertext = await crypto.subtle.encrypt(algorithm, key, encoded)
 
 	return {
 		ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
@@ -80,11 +112,16 @@ async function encryptWithAesGcm(key, plaintext) {
 	}
 }
 
-async function decryptWithAesGcm(key, ciphertextB64, ivB64) {
+async function decryptWithAesGcm(key, ciphertextB64, ivB64, aad) {
 	const ciphertext = base64ToBytes(ciphertextB64)
 	const iv = base64ToBytes(ivB64)
 
-	const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext)
+	const algorithm = { name: "AES-GCM", iv }
+	if (aad) {
+		algorithm.additionalData = aad
+	}
+
+	const plaintext = await crypto.subtle.decrypt(algorithm, key, ciphertext)
 
 	return new TextDecoder().decode(plaintext)
 }
@@ -126,7 +163,7 @@ async function encryptWithServerCert(data) {
 		dataBuffer,
 	)
 
-	return window.btoa(ab2str(encrypted))
+	return bytesToBase64(new Uint8Array(encrypted))
 }
 
 // TODO: Check if the signature corresponds to the content with AEAD
@@ -164,17 +201,40 @@ function str2ab(str) {
 	return buf
 }
 
-function ab2str(buf) {
-	return String.fromCharCode.apply(null, new Uint8Array(buf))
+/**
+ * Builds Additional Authenticated Data (AAD) for AES-GCM
+ * @param {string} sender
+ * @param {string} recipient
+ * @param {number} seq
+ * @returns {Uint8Array}
+ */
+function buildAad(sender, recipient, seq) {
+	const encoder = new TextEncoder()
+	const senderBytes = encoder.encode(sender)
+	const recipientBytes = encoder.encode(recipient)
+	const seqBytes = new ArrayBuffer(8)
+	const view = new DataView(seqBytes)
+	// BigEndian as in the server (binary.BigEndian)
+	view.setBigUint64(0, BigInt(seq), false)
+
+	const totalLen = senderBytes.length + recipientBytes.length + 8
+	const aad = new Uint8Array(totalLen)
+
+	aad.set(senderBytes, 0)
+	aad.set(recipientBytes, senderBytes.length)
+	aad.set(new Uint8Array(seqBytes), senderBytes.length + recipientBytes.length)
+
+	return aad
 }
 
 export {
 	generateKeyPair,
 	generateEphemeralSecret,
 	importServerPublicKey,
-	deriveSymmetricKey,
+	deriveSessionKeys,
 	encryptWithAesGcm,
 	decryptWithAesGcm,
 	encryptWithServerCert,
 	verifyServerSignature,
+	buildAad,
 }

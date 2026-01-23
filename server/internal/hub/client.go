@@ -4,43 +4,52 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"mensageria_segura/internal/database"
 	"mensageria_segura/internal/key_exchange"
+	"sync"
 
 	"github.com/gorilla/websocket"
 )
 
 type Client struct {
-	ctx          context.Context
-	conn         *websocket.Conn
-	send         chan []byte
-	sessionID    string
-	symmetricKey []byte
-	onMessage    func(*Client, []byte)
-	onClose      func(*Client)
+	id        string
+	ctx       context.Context
+	conn      *websocket.Conn
+	send      chan []byte
+	session   *Session
+	onMessage func(client *Client, recipientID string, payload []byte)
+	onClose   func(*Client)
+	closeOnce sync.Once
 }
 
-func NewClient(ctx context.Context, conn *websocket.Conn, onMessage func(*Client, []byte), onClose func(client *Client)) *Client {
+func NewClient(
+	id string,
+	ctx context.Context,
+	conn *websocket.Conn,
+	session *Session,
+	onMessage func(client *Client, recipientID string, payload []byte),
+	onClose func(client *Client),
+) *Client {
 	return &Client{
+		id:        id,
 		ctx:       ctx,
 		conn:      conn,
+		session:   session,
 		send:      make(chan []byte, 256),
 		onMessage: onMessage,
 		onClose:   onClose,
 	}
 }
 
+func (c *Client) SessionID() int {
+	return c.session.ID()
+}
+
+func (c *Client) ID() string {
+	return c.id
+}
+
 func (c *Client) ReadPump() {
-	defer func() {
-		if c.onClose != nil {
-			c.onClose(c)
-		}
-		err := c.conn.Close()
-		if err != nil {
-			slog.Error("failed to close websocket connection", "error", err)
-			return
-		}
-	}()
+	defer c.closeConnection()
 
 	for {
 		select {
@@ -49,10 +58,14 @@ func (c *Client) ReadPump() {
 		default:
 			_, message, err := c.conn.ReadMessage()
 			if err != nil {
-				// If the loop is ending due to context cancellation, don't log it as an error.
 				if c.ctx.Err() != nil {
 					return
 				}
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
+					slog.Info("websocket connection closed normally")
+					return
+				}
+
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					slog.Error("websocket error", "error", err)
 				}
@@ -70,36 +83,45 @@ func (c *Client) ReadPump() {
 				continue
 			}
 
-			_, symKey, ok, _ := database.GetSession(database.DB, encryptedMsg.SessionID)
-			if !ok {
-				slog.Warn("unknown session id", "session_id", encryptedMsg.SessionID)
+			if encryptedMsg.SessionID != c.session.ID() {
+				slog.Warn("dropping message for another session",
+					"session_id", encryptedMsg.SessionID,
+					"expected_session_id", c.session.ID(),
+					"client_id", c.ID(),
+				)
 				continue
 			}
 
-			if c.symmetricKey == nil {
-				c.symmetricKey = symKey
+			seq := encryptedMsg.SeqNo
+			if !c.session.AdvanceRecvSeq(seq) {
+				slog.Warn("replay or out-of-order",
+					"current", c.session.RecvSeq(),
+					"incoming", seq,
+				)
+				continue
 			}
 
-			plaintext, err := key_exchange.DecryptWithSymmetric(c.symmetricKey, encryptedMsg.Content, encryptedMsg.IV)
+			aad := BuildAAD(
+				encryptedMsg.SenderID,
+				encryptedMsg.RecipientID,
+				seq,
+			)
+
+			plaintext, err := key_exchange.DecryptWithSymmetricAAD(c.session.KeyC2S(), encryptedMsg.Content, encryptedMsg.IV, aad)
 			if err != nil {
 				slog.Error("failed to decrypt message", "error", err)
 				continue
 			}
 
 			if c.onMessage != nil {
-				c.onMessage(c, plaintext)
+				c.onMessage(c, encryptedMsg.RecipientID, plaintext)
 			}
 		}
 	}
 }
 
 func (c *Client) WritePump() {
-	defer func(conn *websocket.Conn) {
-		err := conn.Close()
-		if err != nil {
-			slog.Error("failed to close websocket connection", "error", err)
-		}
-	}(c.conn)
+	defer c.closeConnection()
 
 	for {
 		select {
@@ -130,5 +152,21 @@ func (c *Client) Close() {
 }
 
 func (c *Client) IsAuthenticated() bool {
-	return c.symmetricKey != nil
+	if c.session == nil {
+		return false
+	}
+	c2s, s2c := c.session.KeyPair()
+	return c2s != nil && s2c != nil
+}
+
+func (c *Client) closeConnection() {
+	c.closeOnce.Do(func() {
+		if c.onClose != nil {
+			c.onClose(c)
+		}
+		err := c.conn.Close()
+		if err != nil {
+			slog.Error("failed to close websocket connection", "error", err)
+		}
+	})
 }

@@ -1,9 +1,12 @@
 package hub
 
 type EncryptedMessage struct {
-	SessionID int    `json:"sessionId"`
-	Content   string `json:"content"`
-	IV        string `json:"iv"`
+	SessionID   int    `json:"sessionId"`
+	SenderID    string `json:"senderId"`
+	RecipientID string `json:"recipientId"`
+	Content     string `json:"content"`
+	SeqNo       uint64 `json:"seqNo"`
+	IV          string `json:"iv"`
 }
 
 type ChatMessage struct {

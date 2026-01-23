@@ -9,10 +9,10 @@ import (
 	"io"
 	"log/slog"
 	"mensageria_segura/internal"
-	"mensageria_segura/internal/database"
 	"mensageria_segura/internal/hub"
 	"mensageria_segura/internal/key_exchange"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/websocket"
 )
@@ -36,6 +36,36 @@ func NewController(ctx context.Context, h *hub.Hub) *Controller {
 }
 
 func (c *Controller) HandleWS(w http.ResponseWriter, r *http.Request) {
+
+	clientID := r.URL.Query().Get("clientId")
+	if clientID == "" {
+		c.writeError(w, http.StatusBadRequest, "missing client id", nil)
+		return
+	}
+
+	sessionID := r.URL.Query().Get("sessionId")
+	if sessionID == "" {
+		c.writeError(w, http.StatusBadRequest, "missing session id", nil)
+		return
+	}
+
+	parsedSessionID, err := strconv.Atoi(sessionID)
+	if err != nil {
+		c.writeError(w, http.StatusBadRequest, "invalid session id", err)
+		return
+	}
+
+	session, exists := c.hub.GetSession(parsedSessionID)
+	if !exists {
+		c.writeError(w, http.StatusBadRequest, "invalid session id", nil)
+		return
+	}
+
+	if session.ClientID() != clientID {
+		c.writeError(w, http.StatusBadRequest, "client id does not match session", nil)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("upgrade failed", "error", err)
@@ -43,9 +73,11 @@ func (c *Controller) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := hub.NewClient(
+		clientID,
 		c.ctx,
 		conn,
-		c.hub.Broadcast,
+		session,
+		c.hub.DeliverMessage,
 		c.hub.Unregister,
 	)
 
@@ -68,7 +100,7 @@ func (c *Controller) writeError(w http.ResponseWriter, status int, message strin
 	if err != nil {
 		slog.Error(message, "error", err)
 	}
-	c.writeJSON(w, status, map[string]string{"error": message})
+	http.Error(w, message, status)
 }
 
 func (c *Controller) HandleKeyExchange(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +120,14 @@ func (c *Controller) HandleKeyExchange(w http.ResponseWriter, r *http.Request) {
 		c.writeError(w, http.StatusBadRequest, "Invalid JSON", err)
 		return
 	}
+
+	// Use Basic Auth for Client ID
+	user, _, ok := r.BasicAuth()
+	if !ok || user == "" {
+		c.writeError(w, http.StatusUnauthorized, "Missing or invalid Basic Auth", nil)
+		return
+	}
+	req.ClientId = user
 
 	response, err := c.conductKeyExchange(req)
 	if err != nil {
@@ -142,15 +182,15 @@ func (c *Controller) conductKeyExchange(req key_exchange.KeyExchangeRequest) (ma
 		return nil, fmt.Errorf("failed to handle salt")
 	}
 
-	symmetricKey, err := key_exchange.DeriveSymmetricKey(sharedSecret, saltBytes)
+	keyC2S, keyS2C, err := key_exchange.HKDFDeriveKeys(sharedSecret, saltBytes)
 	if err != nil {
-		slog.Error("failed to derive symmetric key", "error", err)
-		return nil, fmt.Errorf("failed to derive key")
+		slog.Error("failed to derive keys", "error", err)
+		return nil, fmt.Errorf("failed to derive keys")
 	}
 
-	sessionID, err := database.CreateSession(database.DB, req.ClientId, salt, symmetricKey)
+	sessionID, err := c.hub.CreateSession(req.ClientId, salt, keyC2S, keyS2C)
 	if err != nil {
-		slog.Error("failed to generate session id", "error", err)
+		slog.Error("failed to create session in hub", "error", err)
 		return nil, fmt.Errorf("failed to create session")
 	}
 
